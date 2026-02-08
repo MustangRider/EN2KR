@@ -16,6 +16,21 @@ dist/
 # Logs/cache
 logs-en2kr/
 torch_cache/
+*.log
+*.tmp
+
+# Editor/IDE
+.vscode/
+.idea/
+
+# Python tooling
+.pytest_cache/
+.python-version
+*.egg-info/
+
+# Env files
+.env
+.env.*
 
 # Local settings / secrets
 api키.txt

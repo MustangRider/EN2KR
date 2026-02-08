@@ -1,0 +1,24 @@
+# EN2KR4GAMING - 실시간 게임 음성 번역 오버레이
+
+해외 유저와의 음성 채팅을 실시간으로 번역해 게임 화면 위에 오버레이로 표시해 줄 수 있는 프로그램입니다.
+시스템 오디오 후킹 기반의 실시간 번역기이며 적은 VRAM으로 큰 효과를 내기 위해 외부 번역 API키를 요구합니다.
+
+Windows 10/11 전용
+NVIDIA GPU 호환 (CUDA 지원)
+VB-Audio Virtual Cable 설치 필수
+
+## 번역 API 설정
+
+적은 VRAM으로 높은 성능을 내기 위해 클라우드 번역 API를 사용합니다. 아래 두 가지 중 선택하여 무료 API 키를 발급받으세요.
+
+### DeepL API (추천)
+- 만들기 쉬움, 용량 적음
+- 기간 제한 없는 무료 (월 50만자)
+- [API 키 발급 가이드](https://support.deepl.com/hc/ko/articles/360020695820)
+
+### Azure Translator API
+-  설정이 복잡함, 용량 큼
+- 12개월 무료 (월 200만자)
+- [API 키 발급 가이드](https://memoengine.com/docs/ai/azure-translator-service-setup-guide/)
+
+※두 API 모두 본인 인증용 해외 카드 등록이 필요하지만, API 한도 초과 또는 무료 기간이 끝나더라도 결제가 이루어지지 않습니다.

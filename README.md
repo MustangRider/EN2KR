@@ -18,3 +18,9 @@ python EN2KR4GAMING.py
 
 ## 제외된 항목
 - 로그, 캐시, 빌드 결과물, 가상환경, 개인 설정 파일은 Git에 포함되지 않습니다.
+
+## 자동 업로드 (저장 시 자동 커밋/푸시)
+1) PowerShell에서 아래 스크립트를 실행
+  - auto_push.ps1
+2) 파일 저장 시 자동으로 commit/push 됩니다.
+3) 중지하려면 PowerShell 창을 닫으면 됩니다.
