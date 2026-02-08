@@ -41,6 +41,13 @@ settings_en2kr_whisper_context.json
 *_before_rollback_*.py
 * - 복사본.py
 
+# Large/local assets not required to run
+model/
+silero_vad.jit
+en2kr.ico
+READ ME.txt
+업데이트 아이디어.txt
+
 # Tests
 /test_*.py
 
