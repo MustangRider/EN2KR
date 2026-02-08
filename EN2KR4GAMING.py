@@ -55,6 +55,7 @@ SAMPLE_RATE = 16000
 VAD_WINDOW_SIZE = 512
 MAX_DISPLAY_LINES = 5
 MAX_HISTORY_LIMIT = 100
+ALLOW_VAD_DOWNLOAD = os.environ.get("EN2KR_ALLOW_VAD_DOWNLOAD", "0") == "1"
 
 def find_optimal_audio_device():
     """
@@ -1538,29 +1539,29 @@ if __name__ == "__main__":
                         print(f"[VAD] 로컬 디렉토리 로드 실패: {e2}")
                         vad_load_error = e2
                 else:
-                    # 2-3: 인터넷을 통해 다운로드 (최후 수단)
-                    try:
-                        import ssl
-                        ssl._create_default_https_context = ssl._create_unverified_context
-                        
-                        GLOBAL_VAD, _ = torch.hub.load(
-                            repo_or_dir='snakers4/silero-vad', 
-                            model='silero_vad', 
-                            trust_repo=True,
-                            force_reload=True
-                        )
-                        print("[VAD] 인터넷을 통한 모델 다운로드 성공")
-                        
-                        # 다운로드 성공 시 .jit 파일로 저장하여 다음 실행 시 사용
+                    # 2-3: 인터넷을 통한 다운로드 (옵션)
+                    if ALLOW_VAD_DOWNLOAD:
                         try:
-                            torch.jit.save(torch.jit.script(GLOBAL_VAD), vad_jit_path)
-                            print(f"[VAD] 모델을 프로그램 폴더에 저장: {vad_jit_path}")
-                        except:
-                            pass  # 저장 실패해도 실행은 계속
+                            GLOBAL_VAD, _ = torch.hub.load(
+                                repo_or_dir='snakers4/silero-vad', 
+                                model='silero_vad', 
+                                trust_repo=True,
+                                force_reload=True
+                            )
+                            print("[VAD] 인터넷을 통한 모델 다운로드 성공")
                             
-                    except Exception as e3:
-                        print(f"[VAD] 인터넷 다운로드 실패: {e3}")
-                        vad_load_error = e3
+                            # 다운로드 성공 시 .jit 파일로 저장하여 다음 실행 시 사용
+                            try:
+                                torch.jit.save(torch.jit.script(GLOBAL_VAD), vad_jit_path)
+                                print(f"[VAD] 모델을 프로그램 폴더에 저장: {vad_jit_path}")
+                            except:
+                                pass  # 저장 실패해도 실행은 계속
+                                
+                        except Exception as e3:
+                            print(f"[VAD] 인터넷 다운로드 실패: {e3}")
+                            vad_load_error = e3
+                    else:
+                        vad_load_error = RuntimeError("VAD 자동 다운로드가 비활성화되어 있습니다.")
         
         if GLOBAL_VAD is None:
             raise RuntimeError(f"VAD 모델 로드 실패: {vad_load_error}")
