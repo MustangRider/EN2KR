@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 *.pyd
 *.spec
+!EN2KR4GAMING.spec
 
 # Virtual env
 venv/
