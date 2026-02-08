@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.spec
+
+# Virtual env
+venv/
+.venv/
+
+# Build outputs
+build/
+dist/
+
+# Logs/cache
+logs-en2kr/
+torch_cache/
+
+# Local settings / secrets
+api키.txt
+settings_en2kr_whisper_context.json
+
+# Backups / copies
+*_backup_*.py
+*_before_rollback_*.py
+* - 복사본.py
+
+# Tests
+/test_*.py
+
+# OS
+.DS_Store
+Thumbs.db

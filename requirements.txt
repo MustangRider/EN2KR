@@ -1,0 +1,9 @@
+keyboard
+requests
+deepl
+numpy
+sounddevice
+torch
+PySide6
+faster-whisper
+pywin32
