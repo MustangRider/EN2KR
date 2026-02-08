@@ -1,5 +1,5 @@
 $ErrorActionPreference = "Stop"
-$Repo = "C:\Users\정세훈\Desktop\번역 오버레이"
+$Repo = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Git = "C:\Program Files\Git\cmd\git.exe"
 $Branch = "main"
 $Remote = "origin"
