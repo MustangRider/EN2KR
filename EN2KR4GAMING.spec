@@ -1,12 +1,28 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files, collect_dynamic_libs
+import site
+
+# Get torchaudio installation path
+site_packages = site.getsitepackages()[0] if site.getsitepackages() else ''
+torchaudio_path = os.path.join(site_packages, 'torchaudio') if site_packages else None
+
+# Collect torchaudio components
+torchaudio_hidden = collect_submodules('torchaudio')
+torchaudio_datas = collect_data_files('torchaudio') if torchaudio_path and os.path.exists(torchaudio_path) else []
+torchaudio_binaries = collect_dynamic_libs('torchaudio') if torchaudio_path and os.path.exists(torchaudio_path) else []
+
+# Add explicit torchaudio path if available
+if torchaudio_path and os.path.exists(torchaudio_path):
+    torchaudio_datas.append((torchaudio_path, 'torchaudio'))
 
 a = Analysis(
     ['EN2KR4GAMING.py'],
     pathex=[],
-    binaries=[],
-    datas=[('model', 'model'), ('models/silero_vad/silero_vad.jit', 'models/silero_vad')],
-    hiddenimports=['torch', 'torch.cuda', 'torch._C', 'faster_whisper', 'ctranslate2', 'numpy', 'sounddevice', 'deepl', 'requests', 'PySide6.QtCore', 'PySide6.QtWidgets', 'PySide6.QtGui'],
+    binaries=torchaudio_binaries,
+    datas=[('models', 'models')] + torchaudio_datas,
+    hiddenimports=['torch', 'torch.cuda', 'torch._C', 'torchaudio', 'faster_whisper', 'ctranslate2', 'numpy', 'sounddevice', 'deepl', 'requests', 'PySide6.QtCore', 'PySide6.QtWidgets', 'PySide6.QtGui'] + torchaudio_hidden,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -32,7 +48,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['en2kr.ico'],
+    icon=['EN2KR4GAMING_1.ico'],
 )
 coll = COLLECT(
     exe,

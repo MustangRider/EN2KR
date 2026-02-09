@@ -57,6 +57,20 @@ MAX_DISPLAY_LINES = 5
 MAX_HISTORY_LIMIT = 100
 ALLOW_VAD_DOWNLOAD = os.environ.get("EN2KR_ALLOW_VAD_DOWNLOAD", "0") == "1"
 
+def log_startup_error(title, message, details=None):
+    try:
+        now = datetime.now()
+        file_path = os.path.join(LOG_DIR, f"{now.strftime('%Y-%m-%d')}.txt")
+        with open(file_path, "a", encoding="utf-8") as f:
+            f.write(f"[{now.strftime('%H:%M:%S')}] {title}: {message}\n")
+            if details:
+                f.write(f"Details: {details}\n")
+    except Exception:
+        pass
+    if details:
+        message = f"{message}\n\n{details}"
+    QtWidgets.QMessageBox.critical(None, title, message)
+
 def find_optimal_audio_device():
     """
     최적화된 VB 케이블 오디오 장치 선택 (안정성 + 대역폭 우선)
@@ -107,10 +121,16 @@ def find_optimal_audio_device():
         # 기타
         return 100
     
-    # 입력 채널이 있는 모든 장치 후보 수집
+    # 입력 채널이 있는 VB-Audio/CABLE Output 장치만 후보 수집
     candidates = []
     for i in range(len(devices)):
         if devices[i]['max_input_channels'] > 0:
+            name_lower = devices[i]['name'].lower()
+            if (TARGET_KEYWORD.lower() not in name_lower
+                and "vb-audio" not in name_lower
+                and "virtual cable" not in name_lower
+                and "cable output" not in name_lower):
+                continue
             priority = get_device_priority(devices[i]['name'], devices[i]['max_input_channels'], devices[i]['hostapi'])
             candidates.append((i, priority, devices[i]['name'], devices[i]['max_input_channels'], devices[i]['hostapi']))
     
@@ -1408,29 +1428,56 @@ if __name__ == "__main__":
     app.processEvents()
 
     print(f"[SYSTEM] Loading Models (Whisper/VAD)... Please wait.")
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     
-    # CUDA 미감지 시 사용자에게 설치 안내
-    if not torch.cuda.is_available():
+    # GPU 백엔드 자동 감지 및 선택
+    DEVICE = "cpu"
+    cuda_available = torch.cuda.is_available()
+    cuda_build = getattr(torch.version, "cuda", None)
+    
+    if cuda_available:
+        DEVICE = "cuda"
+        print(f"[GPU] CUDA (NVIDIA) 감지됨: {torch.version.cuda}")
+    else:
+        # DirectML (Windows GPU 가속)
+        try:
+            import torch_directml
+            DEVICE = torch_directml.device()
+            print(f"[GPU] DirectML (Windows GPU) 활성화됨")
+        except ImportError:
+            # Intel Extension for PyTorch
+            try:
+                import intel_extension_for_pytorch
+                DEVICE = "xpu"
+                print(f"[GPU] Intel Extension 활성화됨")
+            except ImportError:
+                print(f"[GPU] GPU 감지 안 됨 - CPU 모드로 실행합니다")
+    
+    # CPU 모드 경고 (GPU를 찾을 수 없을 때만)
+    if DEVICE == "cpu":
         loading_dialog.hide()
         
         msg_box = QtWidgets.QMessageBox()
         msg_box.setWindowTitle("⚠️ GPU 가속 미사용 경고")
         msg_box.setIcon(QtWidgets.QMessageBox.Warning)
         msg_box.setText(
-            "<b>⚠️ NVIDIA GPU가 감지되지 않았습니다.</b><br><br>"
+            "<b>⚠️ GPU 가속을 사용할 수 없습니다.</b><br><br>"
             "<span style='color: #ff8800; font-weight: bold;'>CPU 모드로 실행됩니다. 번역 속도가 매우 느려질 수 있습니다.</span><br><br>"
             "<b>GPU 가속을 원하시나요?</b>"
         )
+        
+        gpu_options = ""
+        if not cuda_build:
+            gpu_options += "• <b>NVIDIA CUDA</b>: <u>pip install --upgrade torch --index-url https://download.pytorch.org/whl/cu124</u><br>"
+        if not cuda_available:
+            gpu_options += "• <b>Windows GPU (DirectML)</b>: <u>pip install torch-directml</u><br>"
+            gpu_options += "• <b>Intel Arc GPU</b>: <u>pip install intel-extension-for-pytorch</u><br>"
+        
         msg_box.setInformativeText(
             "📊 <b>성능 비교:</b><br>"
             "• GPU 가속: <span style='color: #00ff00; font-weight: bold;'>실시간 번역 (1~2초)</span><br>"
             "• CPU 모드: <span style='color: #ff0000; font-weight: bold;'>느린 번역 (5~10초)</span><br><br>"
-            "✅ GPU 가속을 사용하면 <b>3~5배 빠른 번역 속도</b>를 경험할 수 있습니다.<br><br>"
-            "필수 요구사항:<br>"
-            "• NVIDIA 그래픽카드 (GTX 900 시리즈 이상)<br>"
-            "• CUDA Toolkit 설치<br><br>"
-            "'예'를 선택하면 CUDA 다운로드 페이지로 이동합니다.<br>"
+            "<b>GPU 옵션 (설치 명령어):</b><br>" + gpu_options + "<br>"
+            "'예'를 선택하면 PyTorch GPU 설치 페이지로 이동합니다.<br>"
             "'아니요'를 선택하면 느린 CPU 모드로 계속 진행합니다."
         )
         msg_box.setStandardButtons(
@@ -1443,17 +1490,17 @@ if __name__ == "__main__":
         msg_box.setCheckBox(dont_show_again)
         
         # 설정 파일에서 무시 여부 확인
-        show_cuda_warning = True
+        show_warning = True
         try:
             if os.path.exists(SETTINGS_FILE):
                 with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                     settings = json.load(f)
-                    if settings.get("ignore_cuda_warning", False):
-                        show_cuda_warning = False
+                    if settings.get("ignore_gpu_warning", False):
+                        show_warning = False
         except:
             pass
         
-        if show_cuda_warning:
+        if show_warning:
             result = msg_box.exec()
             
             # 체크박스 상태 저장
@@ -1463,19 +1510,18 @@ if __name__ == "__main__":
                     if os.path.exists(SETTINGS_FILE):
                         with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                             settings = json.load(f)
-                    settings["ignore_cuda_warning"] = True
+                    settings["ignore_gpu_warning"] = True
                     with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
                         json.dump(settings, f, indent=4, ensure_ascii=False)
                 except:
                     pass
             
             if result == QtWidgets.QMessageBox.Yes:
-                # CUDA 다운로드 페이지 열기
-                webbrowser.open("https://developer.nvidia.com/cuda-downloads")
+                webbrowser.open("https://pytorch.org/get-started/locally/")
                 QtWidgets.QMessageBox.information(
                     None,
-                    "CUDA 설치 안내",
-                    "CUDA Toolkit 다운로드 페이지가 열렸습니다.\n\n"
+                    "GPU 설치 안내",
+                    "PyTorch GPU 설치 페이지가 열렸습니다.\n\n"
                     "설치 완료 후 프로그램을 재시작하면\n"
                     "자동으로 GPU 가속이 활성화됩니다.\n\n"
                     "현재는 CPU 모드로 계속 진행합니다."
@@ -1486,7 +1532,19 @@ if __name__ == "__main__":
     loading_dialog.setLabelText(f"Whisper 모델 로드 중... (Device: {DEVICE.upper()})")
     loading_dialog.setValue(1)
     app.processEvents()
-    GLOBAL_WHISPER = WhisperModel(WHISPER_MODEL_SIZE, device=DEVICE, compute_type="float16" if DEVICE=="cuda" else "int8")
+    try:
+        GLOBAL_WHISPER = WhisperModel(
+            WHISPER_MODEL_SIZE,
+            device=DEVICE,
+            compute_type="float16" if DEVICE == "cuda" else "int8"
+        )
+    except Exception as e:
+        log_startup_error(
+            "Whisper 모델 로드 실패",
+            "Whisper 모델을 초기화하지 못했습니다.",
+            str(e)
+        )
+        sys.exit(1)
     
     loading_dialog.setLabelText("VAD 모델 로드 중...")
     loading_dialog.setValue(2)
@@ -1636,7 +1694,11 @@ if __name__ == "__main__":
         stream.start()
         exit_code = app.exec()
     except Exception as e:
-        print(f"Stream Error: {e}")
+        log_startup_error(
+            "오디오 스트림 오류",
+            "오디오 입력 스트림을 시작하지 못했습니다.\n장치 설정을 확인해주세요.",
+            str(e)
+        )
         exit_code = 1
     finally:
         running_flag = False
