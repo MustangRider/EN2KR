@@ -1,3 +1,5 @@
+"""EN2KR4GAMING - 백엔드 파이프라인 (VAD, STT, 환각 추적)"""
+
 import time
 import queue
 import numpy as np

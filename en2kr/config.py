@@ -133,7 +133,7 @@ class AppConfig:
     api_key: str = ""
     azure_region: str = "koreacentral"
     vad_threshold: float = 0.15
-    silence_duration: float = 0.8
+    silence_duration: float = 0.4
     context_timeout: float = 0.5
     context_reset_seconds: float = 3.0
     min_avg_logprob: float = -1.0
@@ -202,8 +202,8 @@ def load_settings(config: AppConfig, path: str = SETTINGS_FILE) -> None:
         config.selected_api = d.get("selected_api", config.selected_api)
         config.api_key = decode_key(d.get("api_key", ""))
         config.azure_region = d.get("azure_region", config.azure_region)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[ERROR] 설정 파일 로드 실패: {e}")
 
 
 def save_settings(
