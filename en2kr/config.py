@@ -133,7 +133,7 @@ class AppConfig:
     api_key: str = ""
     azure_region: str = "koreacentral"
     vad_threshold: float = 0.15
-    silence_duration: float = 0.4
+    silence_duration: float = 0.8
     context_timeout: float = 0.5
     context_reset_seconds: float = 3.0
     min_avg_logprob: float = -1.0
@@ -255,8 +255,11 @@ def save_settings(
     if max_display_lines is not None:
         d["max_display_lines"] = max_display_lines
 
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(d, f, indent=4, ensure_ascii=False)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(d, f, indent=4, ensure_ascii=False)
+    except Exception as e:
+        print(f"[ERROR] 설정 저장 실패: {e}")
 
 # ================= 6. 디렉토리 초기화 =================
 
