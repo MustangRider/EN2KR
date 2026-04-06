@@ -36,7 +36,7 @@ def main():
 
     from en2kr.config import (
         AppConfig, load_settings, save_settings, init_directories,
-        log_startup_error, decode_key,
+        log_startup_error,
         SETTINGS_FILE, VAD_MODEL_DIR, VAD_CACHE_DIR,
         WHISPER_MODEL_SIZE, SAMPLE_RATE, ALLOW_VAD_DOWNLOAD,
     )
