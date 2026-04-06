@@ -45,6 +45,7 @@
 - **빌드**: PyInstaller
 
 ## 레퍼런스
+- **코드 심층 분석 (진단·등급·미해결 사항·향후 개선)**: `.ref/code-analysis.md`
 - **모듈 API 상세 (함수 시그니처·의존성·데이터 흐름)**: `.ref/module-api.md`
 - **모듈 분리 설계 스펙**: `docs/superpowers/specs/2026-04-07-module-separation-design.md`
 - **모듈 분리 구현 계획**: `docs/superpowers/plans/2026-04-07-module-separation.md`
