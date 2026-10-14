@@ -6,6 +6,7 @@ Uses the user's real settings (API keys included) but never touches audio
 devices. Exit code 0 when at least one line was recognised.
 """
 import argparse
+import logging
 import os
 import sys
 import time
@@ -93,11 +94,22 @@ def main(argv):
     ap.add_argument("--out")
     ap.add_argument("--model")
     ap.add_argument("--mode", choices=["english", "fixed", "auto"])
-    args = ap.parse_args(argv)
-    if not args.out and sys.stdout is None:  # windowed exe: no console to print to
+    # The windowed exe has no console: an uncaught error would leave PyInstaller's hidden error
+    # dialog waiting forever, so every failure is written to the report instead.
+    try:
+        args = ap.parse_args(argv)
+    except SystemExit:
+        return 2
+    if not args.out and sys.stdout is None:
         args.out = os.path.join(paths.app_dir(), "selftest.txt")
     log.setup()
-    report = format_report(run(Settings().load(), args.selftest, args.model, args.mode))
+    try:
+        if not os.path.isfile(args.selftest):
+            raise FileNotFoundError(f"WAV 파일이 없습니다: {args.selftest}")
+        report = format_report(run(Settings().load(), args.selftest, args.model, args.mode))
+    except Exception as e:
+        logging.getLogger(__name__).exception("selftest failed")
+        report = f"ERROR {type(e).__name__}: {e}\nRESULT FAIL"
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
             f.write(report + "\n")

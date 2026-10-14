@@ -179,11 +179,139 @@ class SttResult:
     language: str = "en"
     language_conf: float = 1.0
     skipped: Optional[str] = None          # reason when intentionally not transcribed
+    skip_note: str = ""                    # user-facing explanation for non-Korean skips
     avg_logprob: float = 0.0
     no_speech_prob: float = 0.0
     latency: float = 0.0
     audio_sec: float = 0.0
     rejected: list = field(default_factory=list)  # low-confidence segment texts
+
+
+# ---------------- cloud speech recognition (Groq) ----------------
+
+GROQ_URL = "https://api.groq.com/openai/v1"
+CLOUD_MODELS = {
+    "whisper-large-v3": "정확도 우선 (추천)",
+    "whisper-large-v3-turbo": "조금 더 빠름, 문장부호를 자주 빼먹음",
+}
+_WHISPER_LANG_NAMES = {
+    "english": "en", "korean": "ko", "german": "de", "french": "fr", "spanish": "es", "russian": "ru",
+    "polish": "pl", "portuguese": "pt", "italian": "it", "dutch": "nl", "swedish": "sv",
+    "ukrainian": "uk", "turkish": "tr", "japanese": "ja", "chinese": "zh",
+}
+
+
+class CloudError(Exception):
+    pass
+
+
+class CloudAuthError(CloudError):
+    pass
+
+
+class CloudQuotaError(CloudError):
+    def __init__(self, message, retry_after):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class CloudTransientError(CloudError):
+    pass
+
+
+def hangul_ratio(text):
+    """Share of Hangul among the letters of a transcript.
+
+    Groq's language label is unreliable for Korean-accented English (it said
+    "Korean" for 7 of 8 accented English clips) while the transcript itself
+    stayed in Latin letters, so the script decides what is Korean speech.
+    """
+    hangul = sum(1 for c in text if "가" <= c <= "힣" or "ㄱ" <= c <= "ㆎ")
+    latin = sum(1 for c in text if c.isascii() and c.isalpha())
+    return hangul / (hangul + latin) if hangul + latin else 0.0
+
+
+def _retry_after(resp, default=60.0):
+    for key in ("retry-after", "x-ratelimit-reset-requests", "x-ratelimit-reset-audio-seconds"):
+        value = resp.headers.get(key)
+        if not value:
+            continue
+        try:
+            return float(value)
+        except ValueError:
+            pass
+        total, num = 0.0, ""
+        for ch in value:  # Groq formats like "6m28.8s" / "43.2s"
+            if ch.isdigit() or ch == ".":
+                num += ch
+            elif num:
+                total += float(num) * {"h": 3600, "m": 60, "s": 1}.get(ch, 0)
+                num = ""
+        if total:
+            return total
+    return default
+
+
+class GroqStt:
+    """Whisper on Groq's servers: no VRAM use, ~0.3-0.9 s per utterance from Korea."""
+
+    def __init__(self, key, model="whisper-large-v3"):
+        import requests
+        self.key = key.strip()
+        self.model = model if model in CLOUD_MODELS else "whisper-large-v3"
+        self.remaining = None
+        self._http = requests.Session()
+
+    def _headers(self):
+        return {"Authorization": f"Bearer {self.key}"}
+
+    def check(self):
+        import requests
+        try:
+            r = self._http.get(f"{GROQ_URL}/models", headers=self._headers(), timeout=(3.05, 10))
+        except requests.RequestException as e:
+            raise CloudTransientError(f"Groq에 연결하지 못했습니다: {e}") from e
+        if r.status_code in (401, 403):
+            raise CloudAuthError("Groq API 키가 올바르지 않습니다")
+        if r.status_code != 200:
+            raise CloudTransientError(f"Groq 응답 오류 HTTP {r.status_code}")
+        ids = {m.get("id") for m in r.json().get("data", [])}
+        if self.model not in ids:
+            raise CloudError(f"이 키로는 {self.model} 모델을 쓸 수 없습니다")
+
+    def transcribe(self, audio, language=None, prompt=None):
+        import io
+        import wave
+        import requests
+
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(16000)
+            w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
+        data = {"model": self.model, "response_format": "verbose_json", "temperature": "0"}
+        if language:
+            data["language"] = language
+        if prompt:
+            data["prompt"] = prompt
+        try:
+            r = self._http.post(f"{GROQ_URL}/audio/transcriptions", headers=self._headers(),
+                                files={"file": ("speech.wav", buf.getvalue(), "audio/wav")},
+                                data=data, timeout=(3.05, 15))
+        except requests.RequestException as e:
+            raise CloudTransientError(f"Groq 연결 실패: {e}") from e
+        remaining = r.headers.get("x-ratelimit-remaining-requests")
+        if remaining is not None and remaining.isdigit():
+            self.remaining = int(remaining)
+        if r.status_code == 200:
+            return r.json()
+        if r.status_code in (401, 403):
+            raise CloudAuthError("Groq API 키가 올바르지 않습니다")
+        if r.status_code == 429:
+            wait = _retry_after(r)
+            raise CloudQuotaError(f"Groq 무료 한도에 도달했습니다 ({int(wait)}초 후 재개)", wait)
+        raise CloudTransientError(f"Groq 응답 오류 HTTP {r.status_code}: {r.text[:120]}")
 
 
 class SttEngine:
@@ -204,17 +332,22 @@ class SttEngine:
     def __init__(self):
         self.model = None
         self.gate = None
+        self.cloud = None
         self.model_id = None
         self.device = None
         self.compute_type = None
         self.cfg = {}
+        self._cloud_paused_until = 0.0
         self._lock = threading.Lock()
 
     @property
     def ready(self):
-        return self.model is not None
+        return self.model is not None or self.cloud is not None
 
     def describe(self):
+        if self.cloud is not None:
+            left = f" · 오늘 남은 요청 {self.cloud.remaining:,}" if self.cloud.remaining is not None else ""
+            return f"Groq {self.cloud.model} · 클라우드{left}"
         if not self.model:
             return "로드 안 됨"
         extra = " · 한국어 판별" if self.gate is not None else ""
@@ -222,6 +355,8 @@ class SttEngine:
 
     def load(self, cfg, progress=None):
         """Load per cfg (the 'stt' settings section). Returns a list of warnings."""
+        if cfg.get("engine") == "cloud":
+            return self._load_cloud(cfg)
         from faster_whisper import WhisperModel
 
         warnings = []
@@ -255,12 +390,77 @@ class SttEngine:
                     warnings.append(f"한국어 판별 모델을 불러오지 못해 한국어 음성 건너뛰기가 꺼집니다. ({e})")
                     gate = None
             with self._lock:
-                self.model, self.gate = model, gate
+                self.model, self.gate, self.cloud = model, gate, None
                 self.model_id, self.device, self.compute_type = model_id, device, compute
                 self.cfg = dict(cfg)
             log.info("STT ready: %s", self.describe())
             return warnings
         raise RuntimeError(f"음성 인식 모델을 불러오지 못했습니다: {last_error}")
+
+    def _load_cloud(self, cfg):
+        cloud_cfg = cfg.get("cloud") or {}
+        key = (cloud_cfg.get("key") or "").strip()
+        if not key:
+            raise RuntimeError("클라우드 인식에 쓸 Groq API 키가 없습니다. '인식 엔진'에서 키를 입력하세요.")
+        client = GroqStt(key, cloud_cfg.get("model", "whisper-large-v3"))
+        try:
+            client.check()
+        except CloudError as e:
+            raise RuntimeError(str(e)) from e
+        with self._lock:
+            self.model = self.gate = None  # frees any local model's VRAM
+            self.cloud = client
+            self.model_id, self.device, self.compute_type = client.model, "cloud", ""
+            self._cloud_paused_until = 0.0
+            self.cfg = dict(cfg)
+        log.info("STT ready: %s", self.describe())
+        return []
+
+    def _transcribe_cloud(self, cloud, audio, prev_text, cfg):
+        t0 = time.perf_counter()
+        result = SttResult(audio_sec=len(audio) / 16000, language="")
+        wait = self._cloud_paused_until - time.monotonic()
+        if wait > 0:
+            result.skipped, result.skip_note = "cloud_paused", f"Groq 한도 대기 중 ({int(wait)}초 남음)"
+            return result
+        # Groq picks the language itself; Korean is judged from the transcript's script.
+        language = None
+        prompt = prev_text[-200:] if cfg.get("use_context", True) and prev_text else None
+        try:
+            reply = cloud.transcribe(_normalize(audio), language, prompt)
+        except CloudQuotaError as e:
+            self._cloud_paused_until = time.monotonic() + e.retry_after
+            result.skipped, result.skip_note = "cloud_quota", str(e)
+            return result
+        except CloudTransientError as e:
+            result.skipped, result.skip_note = "cloud_error", str(e)
+            return result
+        texts, logprobs, nospeech = [], [], []
+        for s in reply.get("segments") or []:
+            txt = (s.get("text") or "").strip()
+            if not txt:
+                continue
+            if s.get("no_speech_prob", 0) < self.MAX_NO_SPEECH and s.get("avg_logprob", 0) > self.MIN_AVG_LOGPROB:
+                texts.append(txt)
+                logprobs.append(s.get("avg_logprob", 0))
+                nospeech.append(s.get("no_speech_prob", 0))
+            else:
+                result.rejected.append(txt)
+        text = " ".join(texts).strip()
+        if cfg.get("skip_korean", True) and text and hangul_ratio(text) >= 0.5:
+            return self._skipped(result, 1.0, t0)
+        result.text = text
+        result.language = language or _WHISPER_LANG_NAMES.get((reply.get("language") or "").lower(), "")
+        if hangul_ratio(text) < 0.5 and result.language == "ko":
+            result.language = "en"  # English transcript mislabelled as Korean (accented speech)
+        if prompt and text and text.lower() in prompt.lower():
+            result.rejected.append(text)
+            result.text = ""
+        if logprobs:
+            result.avg_logprob = float(np.mean(logprobs))
+            result.no_speech_prob = float(np.mean(nospeech))
+        result.latency = time.perf_counter() - t0
+        return result
 
     def update_options(self, cfg):
         """Apply options that don't need a reload (language mode, context...)."""
@@ -275,7 +475,9 @@ class SttEngine:
 
     def transcribe(self, audio, prev_text=None):
         with self._lock:
-            model, gate, cfg, model_id = self.model, self.gate, dict(self.cfg), self.model_id
+            model, gate, cfg, model_id, cloud = self.model, self.gate, dict(self.cfg), self.model_id, self.cloud
+        if cloud is not None:
+            return self._transcribe_cloud(cloud, audio, prev_text, cfg)
         if model is None:
             raise RuntimeError("STT model not loaded")
         t0 = time.perf_counter()

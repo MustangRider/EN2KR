@@ -82,10 +82,12 @@ DEFAULTS = {
               "voice": {"monitor": True, "monitor_device": "", "monitor_volume": 100}},
     "vad": {"threshold": 0.3, "silence_sec": 0.5, "preroll_sec": 0.3,
             "max_utterance_sec": 12.0, "min_speech_sec": 0.25},
-    "stt": {"mode": "english", "model": "auto", "language": "en",
+    # engine: "local" (Whisper on this PC) or "cloud" (Whisper on Groq, no VRAM use)
+    "stt": {"engine": "local", "mode": "english", "model": "auto", "language": "en",
             "auto_languages": ["en", "ko", "de", "fr", "es", "ru", "pl"],
             "skip_korean": True, "device": "auto", "beam_size": 5,
-            "use_context": True},
+            "use_context": True,
+            "cloud": {"provider": "groq", "model": "whisper-large-v3", "key": ""}},
     "translate": {
         "order": [],
         "providers": {
@@ -124,9 +126,11 @@ def _merge(defaults, saved):
 
 
 def _map_secrets(data, fn):
-    for prov in data.get("translate", {}).get("providers", {}).values():
-        if isinstance(prov, dict) and "key" in prov:
-            prov["key"] = fn(prov.get("key") or "")
+    holders = list(data.get("translate", {}).get("providers", {}).values())
+    holders.append(data.get("stt", {}).get("cloud"))
+    for holder in holders:
+        if isinstance(holder, dict) and "key" in holder:
+            holder["key"] = fn(holder.get("key") or "")
     return data
 
 

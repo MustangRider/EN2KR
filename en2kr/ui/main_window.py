@@ -366,13 +366,14 @@ class MainWindow(QtWidgets.QMainWindow):
             if QtWidgets.QMessageBox.question(self, "번역 API", "등록된 번역 API가 없습니다. 지금 설정할까요?") \
                     == QtWidgets.QMessageBox.StandardButton.Yes:
                 self.open_api()
-        if not self.cuda and not s.get("ui.cpu_warning_dismissed"):
+        if not self.cuda and s.get("stt.engine") != "cloud" and not s.get("ui.cpu_warning_dismissed"):
             box = QtWidgets.QMessageBox(self)
             box.setWindowTitle("GPU 가속 없음")
             box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
             box.setText("NVIDIA GPU를 사용할 수 없어 CPU로 음성을 인식합니다. 번역이 몇 초씩 늦을 수 있습니다.")
-            box.setInformativeText("NVIDIA 그래픽카드가 있다면 최신 그래픽 드라이버를 설치해 보세요. "
-                                   "CUDA Toolkit은 설치할 필요가 없습니다.\n'인식 엔진'에서 작은 모델을 고르면 CPU에서도 빨라집니다.")
+            box.setInformativeText("'인식 엔진'에서 실행 위치를 '클라우드 · Groq'로 바꾸면 GPU 없이도 빠르게 인식합니다 "
+                                   "(무료 API 키 필요).\n\nNVIDIA 그래픽카드가 있다면 최신 그래픽 드라이버를 설치해 보세요. "
+                                   "CUDA Toolkit은 설치할 필요가 없습니다.")
             cb = QtWidgets.QCheckBox("다시 보지 않기")
             box.setCheckBox(cb)
             box.exec()

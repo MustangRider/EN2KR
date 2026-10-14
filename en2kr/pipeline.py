@@ -347,11 +347,17 @@ class Pipeline:
         prev = self._last
         context = prev["text"] if prev and start - prev["end"] <= CONTEXT_GAP_SEC else None
         r = self.engine.transcribe(audio, prev_text=context)
-        if self.engine.ready and self._stt_failures:
-            self._report_stt_ready()
+        if self.engine.ready and (self._stt_failures or self.engine.device == "cloud"):
+            self._report_stt_ready()  # cloud: refresh the remaining-request count
+        if r.skipped in ("cloud_quota", "cloud_paused"):
+            if r.skipped == "cloud_quota":
+                self.events.notice(r.skip_note)
+            self.events.status("stt", "wait", r.skip_note)
         line = SttLine(r.text, r.text, r.language, None, latency=r.latency, rejected=r.rejected)
         if r.skipped == "korean":
             line.note = "한국어 음성 건너뜀"
+        elif r.skipped:
+            line.note = r.skip_note or r.skipped
         elif not r.text:
             line.note = "신뢰도 낮음" if r.rejected else None
         else:
