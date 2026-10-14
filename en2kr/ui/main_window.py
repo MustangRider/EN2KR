@@ -166,7 +166,7 @@ class MainWindow(QtWidgets.QMainWindow):
         refresh = QtWidgets.QPushButton("새로고침")
         refresh.clicked.connect(self._populate_sources)
         src.addWidget(refresh)
-        self.voice_btn = QtWidgets.QPushButton("보이스챗 설정")
+        self.voice_btn = QtWidgets.QPushButton("음성 채팅 설정")
         self.voice_btn.clicked.connect(self.open_voicechat)
         src.addWidget(self.voice_btn)
         self.source_hint = QtWidgets.QLabel()
@@ -367,8 +367,11 @@ class MainWindow(QtWidgets.QMainWindow):
             apps = sessions.list_audio_apps()
         except Exception as e:
             log.warning("listing audio apps failed: %s", e)
-        self.source.addItem("ARC Raiders 보이스챗만 번역 (VB-CABLE)", ("voicechat", None))
+        if audio.get("mode", "process") == "process" and not (audio.get("process_name") or ""):
+            self.source.addItem("— 번역할 프로그램을 선택하세요 —", ("none", None))
+        self.source.addItem("음성 채팅만 번역 (VB-CABLE)", ("voicechat", None))
         self.source.insertSeparator(self.source.count())
+        first_app = self.source.count()
         seen = set()
         saved = audio.get("process_name") or ""
         for a in apps:
@@ -378,8 +381,7 @@ class MainWindow(QtWidgets.QMainWindow):
             playing = "  ● 재생 중" if a.active and a.peak > 0.001 else ""
             self.source.addItem(a.label + playing, ("process", a.name))
         if saved and saved.lower() not in seen:
-            label = sessions.AudioApp(0, saved, False, 0).label
-            self.source.insertItem(2, f"{label}  (실행 대기)", ("process", saved))
+            self.source.insertItem(first_app, f"{saved}  (실행 대기)", ("process", saved))
         self.source.insertSeparator(self.source.count())
         if audio.get("mode") == "device" and audio.get("device_name"):
             self.source.addItem(f"입력 장치: {audio['device_name']}", ("device", audio["device_name"]))
@@ -622,7 +624,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._populate_sources()
 
     def open_onboarding(self):
-        dlg = OnboardingDialog(self)
+        dlg = OnboardingDialog(self.settings.get("hotkeys.edit_mode", "f12"), self)
         dlg.open_api.connect(self.open_api)
         dlg.open_engine.connect(self.open_engine)
         dlg.exec()

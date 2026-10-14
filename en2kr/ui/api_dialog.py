@@ -17,7 +17,7 @@ INFO = {
     "openai": ("Gemini·Groq·OpenRouter·Ollama 등 OpenAI 호환 API. 슬랭과 문맥에 강하지만 느립니다. "
                "무료 한도는 서비스마다 자주 바뀌고, 무료 티어는 입력이 학습에 쓰일 수 있습니다.", None),
 }
-TEST_SENTENCE = "Enemy raider behind the blue gate, don't shoot, we're friendly!"
+TEST_SENTENCE = "Enemy behind the gate on the left, don't shoot, we're friendly!"
 
 
 class ApiDialog(QtWidgets.QDialog):

@@ -1,6 +1,6 @@
-"""ARC Raiders voice chat only, via VB-CABLE.
+"""Voice chat only, via VB-CABLE.
 
-The game's "음성 채팅 출력 장치" is set to "CABLE Input (VB-Audio Virtual
+The game's voice chat output device is set to "CABLE Input (VB-Audio Virtual
 Cable)", so voice chat (and nothing else) arrives on "CABLE Output". We record
 that at the device rate, feed a 16 kHz mono copy to the pipeline and, because
 the player no longer hears voice chat directly, play it back to their headset.
@@ -56,8 +56,8 @@ class VoiceChatCapture:
     @property
     def description(self):
         if self._out is not None:
-            return f"VB-CABLE 보이스챗 · 듣기: {self._out_name}"
-        return "VB-CABLE 보이스챗 · 듣기 꺼짐"
+            return f"VB-CABLE 음성 채팅 · 듣기: {self._out_name}"
+        return "VB-CABLE 음성 채팅 · 듣기 꺼짐"
 
     @property
     def running(self):
@@ -74,7 +74,7 @@ class VoiceChatCapture:
         in_idx, in_dev = _find(sd, api, True,
                                lambda n: "cable output" in n.lower() and "vb-audio virtual cable" in n.lower())
         if in_idx is None:
-            raise RuntimeError("VB-CABLE(CABLE Output)을 찾을 수 없습니다. '보이스챗 설정'에서 VB-CABLE을 설치하세요.")
+            raise RuntimeError("VB-CABLE(CABLE Output)을 찾을 수 없습니다. '음성 채팅 설정'에서 VB-CABLE을 설치하세요.")
         sr = int(in_dev["default_samplerate"])
         self._channels = min(2, in_dev["max_input_channels"])
         self._resampler = Resampler(sr, SAMPLE_RATE)
@@ -84,13 +84,13 @@ class VoiceChatCapture:
             if self.monitor_device:
                 out_idx, out_dev = _find(sd, api, False, lambda n: n == self.monitor_device)
                 if out_idx is None:
-                    raise RuntimeError(f"보이스챗을 들려줄 장치를 찾을 수 없습니다: {self.monitor_device}")
+                    raise RuntimeError(f"음성 채팅을 들려줄 장치를 찾을 수 없습니다: {self.monitor_device}")
             else:
                 out_idx = sd.query_hostapis(api)["default_output_device"]
                 out_dev = sd.query_devices(out_idx)
             if is_cable_name(out_dev["name"]):
                 raise RuntimeError("Windows 기본 출력 장치가 VB-CABLE로 되어 있습니다. 헤드셋을 기본 장치로 되돌리거나 "
-                                   "'보이스챗 설정'에서 들려줄 장치를 직접 고르세요.")
+                                   "'음성 채팅 설정'에서 들려줄 장치를 직접 고르세요.")
             self._out_name = out_dev["name"]
             self._fifo = Fifo(capacity=sr, channels=2, prefill=int(sr * MONITOR_PREFILL_SEC),
                               max_fill=int(sr * MONITOR_MAX_SEC))

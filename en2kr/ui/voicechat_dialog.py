@@ -1,4 +1,4 @@
-"""Setup for "ARC Raiders voice chat only" (VB-CABLE)."""
+"""Setup for "voice chat only" (VB-CABLE)."""
 import subprocess
 import webbrowser
 
@@ -10,9 +10,8 @@ from ..audio.voicechat import is_cable_name
 from .bridge import Worker
 
 GAME_STEPS = (
-    "ARC Raiders → 설정 → 오디오 → <b>음성 채팅</b>에서<br>"
-    f"<b>음성 채팅 출력 장치</b>를 <b>{vbcable.INPUT_NAME}</b>로 바꾸세요.<br>"
-    "게임 효과음·음악은 지금처럼 헤드셋으로 나오고, 보이스챗만 이 프로그램으로 들어옵니다."
+    f"게임의 오디오 설정에서 <b>음성 채팅 출력 장치</b>를 <b>{vbcable.INPUT_NAME}</b>로 바꾸세요.<br>"
+    "게임 효과음·음악은 지금처럼 헤드셋으로 나오고, 음성 채팅만 이 프로그램으로 들어옵니다."
 )
 
 
@@ -21,14 +20,14 @@ class VoiceChatDialog(QtWidgets.QDialog):
 
     def __init__(self, settings, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("ARC Raiders 보이스챗만 번역 (VB-CABLE)")
+        self.setWindowTitle("음성 채팅만 번역 (VB-CABLE)")
         self.setMinimumWidth(640)
         self.settings = settings
         voice = settings.get("audio.voice", {})
         layout = QtWidgets.QVBoxLayout(self)
 
         intro = QtWidgets.QLabel("게임 소리(총소리·기계음 등)는 빼고 <b>음성 채팅만</b> 번역합니다. "
-                                 "게임의 보이스챗 출력을 가상 장치(VB-CABLE)로 보내고, 프로그램이 그 소리를 받아 "
+                                 "게임의 음성 채팅 출력을 가상 장치(VB-CABLE)로 보내고, 프로그램이 그 소리를 받아 "
                                  "번역한 뒤 헤드셋으로 다시 들려줍니다.")
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -64,17 +63,18 @@ class VoiceChatDialog(QtWidgets.QDialog):
         steps = QtWidgets.QLabel(GAME_STEPS)
         steps.setWordWrap(True)
         l2.addWidget(steps)
-        caution = QtWidgets.QLabel("이 설정을 켠 채로 프로그램을 끄면 보이스챗이 들리지 않습니다. "
-                                   "프로그램을 쓰지 않을 때는 게임 설정을 '시스템 기본값'으로 되돌리세요.")
+        caution = QtWidgets.QLabel("게임에 음성 채팅 출력 장치를 따로 고르는 설정이 있어야 이 방식을 쓸 수 있습니다. "
+                                   "이 설정을 켠 채로 프로그램을 끄면 음성 채팅이 들리지 않으니, "
+                                   "프로그램을 쓰지 않을 때는 게임 설정을 원래대로(시스템 기본값) 되돌리세요.")
         caution.setObjectName("muted")
         caution.setWordWrap(True)
         l2.addWidget(caution)
         layout.addWidget(g2)
 
         # 3. monitoring
-        g3 = QtWidgets.QGroupBox("3. 보이스챗 듣기")
+        g3 = QtWidgets.QGroupBox("3. 음성 채팅 듣기")
         f3 = QtWidgets.QFormLayout(g3)
-        self.monitor = QtWidgets.QCheckBox("프로그램이 보이스챗을 헤드셋으로 들려주기 (끄면 보이스챗이 안 들립니다)")
+        self.monitor = QtWidgets.QCheckBox("프로그램이 음성 채팅을 헤드셋으로 들려주기 (끄면 음성 채팅이 안 들립니다)")
         self.monitor.setChecked(voice.get("monitor", True))
         f3.addRow(self.monitor)
         self.device = QtWidgets.QComboBox()

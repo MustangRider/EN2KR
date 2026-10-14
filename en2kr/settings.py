@@ -71,9 +71,9 @@ OPENAI_PRESETS = {
 
 DEFAULTS = {
     "version": 2,
-    # mode: "process" (one program's audio), "voicechat" (ARC Raiders voice chat via VB-CABLE),
+    # mode: "process" (one program's audio), "voicechat" (a game's voice chat via VB-CABLE),
     # "device" (any input device, advanced)
-    "audio": {"mode": "process", "process_name": "PioneerGame.exe", "device_name": "",
+    "audio": {"mode": "process", "process_name": "", "device_name": "",
               "voice": {"monitor": True, "monitor_device": "", "monitor_volume": 100}},
     "vad": {"threshold": 0.3, "silence_sec": 0.5, "preroll_sec": 0.3,
             "max_utterance_sec": 12.0, "min_speech_sec": 0.25},

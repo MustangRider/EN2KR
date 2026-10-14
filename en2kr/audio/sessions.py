@@ -14,10 +14,6 @@ from .com import GUID, HRESULT, Apartment, check, guid, ole32, query_interface, 
 
 log = logging.getLogger(__name__)
 
-KNOWN_APPS = {
-    "pioneergame.exe": "ARC Raiders",
-}
-
 CLSID_MMDeviceEnumerator = guid("{BCDE0395-E52F-467C-8E3D-C4579291692E}")
 IID_IMMDeviceEnumerator = guid("{A95664D2-9614-4F35-A746-DE8DB63617E6}")
 IID_IAudioSessionManager2 = guid("{77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F}")
@@ -44,8 +40,7 @@ class AudioApp:
 
     @property
     def label(self):
-        friendly = KNOWN_APPS.get(self.name.lower())
-        return f"{friendly} ({self.name})" if friendly else self.name
+        return self.name
 
 
 class _PROCESSENTRY32W(ctypes.Structure):
