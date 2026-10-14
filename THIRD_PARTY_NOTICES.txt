@@ -1,0 +1,33 @@
+EN2KR4GAMING - Third-party software notices
+==========================================
+
+This program bundles the following third-party components. Their license
+texts are included in the "licenses" folder next to this file.
+
+Component                         License
+--------------------------------  ------------------------------------------
+Python 3.10                       PSF License
+Qt 6 / PySide6 / Shiboken6        GNU LGPL v3 (dynamically linked DLLs; you may
+                                  replace them with your own build).
+                                  Source: https://code.qt.io/
+faster-whisper                    MIT
+CTranslate2                       MIT
+ONNX Runtime                      MIT
+Silero VAD (model file)           MIT
+NumPy                             BSD-3-Clause
+sounddevice / PortAudio           MIT
+requests, huggingface_hub,
+tokenizers                        Apache-2.0
+deepl                             MIT
+keyboard                          MIT
+pywin32                           PSF License
+NVIDIA cuBLAS, cuDNN, NVRTC       NVIDIA Software License Agreement
+                                  (redistributable runtime libraries)
+
+Not bundled
+-----------
+- Whisper speech models are downloaded on first use from Hugging Face
+  (OpenAI Whisper / distil-whisper: MIT).
+- VB-CABLE is not included. If the user chooses to install it, the program
+  downloads the official package from vb-audio.com and runs VB-Audio's own
+  setup. VB-CABLE is donationware by VB-Audio Software (www.vb-cable.com).

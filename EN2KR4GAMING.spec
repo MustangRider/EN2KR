@@ -39,7 +39,8 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["torch", "torchaudio", "tensorflow", "matplotlib", "tkinter", "IPython", "pytest",
+    # av (PyAV): only used by faster-whisper to decode files; it bundles GPL codecs (see en2kr/stt.py)
+    excludes=["torch", "torchaudio", "tensorflow", "matplotlib", "tkinter", "IPython", "pytest", "av",
               "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtWebEngineCore", "PySide6.QtPdf"],
     noarchive=False,
     optimize=0,

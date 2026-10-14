@@ -36,6 +36,28 @@ HELP = {
 }
 
 
+class HelpDialog(QtWidgets.QDialog):
+    """Plain help popup. QMessageBox makes Windows play its alert sound on every '?' click."""
+
+    def __init__(self, title, html_text, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        lay = QtWidgets.QVBoxLayout(self)
+        lab = QtWidgets.QLabel(html_text)
+        lab.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        lab.setWordWrap(True)
+        lab.setMinimumWidth(380)
+        lay.addWidget(lab)
+        ok = QtWidgets.QPushButton("확인")
+        ok.setObjectName("primary")
+        ok.clicked.connect(self.accept)
+        row = QtWidgets.QHBoxLayout()
+        row.addStretch()
+        row.addWidget(ok)
+        lay.addLayout(row)
+        lay.setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetFixedSize)
+
+
 class SourceCombo(QtWidgets.QComboBox):
     about_to_show = QtCore.Signal()
 
@@ -197,7 +219,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for row, (key, title, lo, hi, value, fmt) in enumerate(specs):
             hb = QtWidgets.QPushButton("?")
             hb.setObjectName("help")
-            hb.clicked.connect(lambda _=False, k=key: QtWidgets.QMessageBox.information(self, *HELP[k]))
+            hb.clicked.connect(lambda _=False, k=key: HelpDialog(*HELP[k], parent=self).exec())
             sl.addWidget(hb, row, 0)
             sl.addWidget(QtWidgets.QLabel(title), row, 1)
             s = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
@@ -444,7 +466,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_status(self, comp, state, msg):
         if comp in self.chips:
             self._set_chip(comp, state, msg)
-        if comp == "stt" and state in ("ok", "error"):
+        if comp == "stt" and state in ("ok", "wait", "error"):
             self.dl_bar.hide()
         if state == "error":
             self._log_html(f"<span style='color:#f85149'>[{comp}] {html.escape(msg)}</span>")

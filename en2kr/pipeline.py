@@ -161,9 +161,15 @@ class Pipeline:
                 self._stt_failures = 0
                 for w in warnings:
                     self.events.notice(w)
-                self.events.status("stt", "ok", self.engine.describe())
+                self._report_stt_ready()
 
         threading.Thread(target=work, name="stt-load", daemon=True).start()
+
+    def _report_stt_ready(self):
+        if self.engine.device == "cpu":
+            self.events.status("stt", "wait", self.engine.describe() + " — CPU 모드(느림)")
+        else:
+            self.events.status("stt", "ok", self.engine.describe())
 
     def _report_translate_status(self):
         labels = self.translator.provider_labels
@@ -342,7 +348,7 @@ class Pipeline:
         context = prev["text"] if prev and start - prev["end"] <= CONTEXT_GAP_SEC else None
         r = self.engine.transcribe(audio, prev_text=context)
         if self.engine.ready and self._stt_failures:
-            self.events.status("stt", "ok", self.engine.describe())
+            self._report_stt_ready()
         line = SttLine(r.text, r.text, r.language, None, latency=r.latency, rejected=r.rejected)
         if r.skipped == "korean":
             line.note = "한국어 음성 건너뜀"

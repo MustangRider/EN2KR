@@ -1,9 +1,12 @@
 """Speech-to-text with faster-whisper: model catalog and engine."""
+import importlib.util
 import json
 import logging
 import os
+import sys
 import threading
 import time
+import types
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -12,6 +15,12 @@ import numpy as np
 from . import gpu, paths
 
 log = logging.getLogger(__name__)
+
+# faster-whisper imports PyAV only to decode audio *files*; this app always passes numpy
+# audio. The release build leaves PyAV out (it ships GPL-licensed x264/x265 codecs and
+# ~66 MB), so satisfy the import with an empty module when it is missing.
+if importlib.util.find_spec("av") is None:
+    sys.modules["av"] = types.ModuleType("av")
 
 LANGUAGES = {
     "en": "영어", "ko": "한국어", "de": "독일어", "fr": "프랑스어", "es": "스페인어",
