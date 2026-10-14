@@ -1,0 +1,76 @@
+{
+  "gpu": "NVIDIA GeForce RTX 5060",
+  "measured": "2026-10-14",
+  "models": {
+    "distil-small.en": {
+      "float16": {
+        "vram_mb": 754,
+        "rtf": 0.031,
+        "text": "Enemy Ray the owner left behind the top looking. Don't shoot you. We are friendly. Let's you work together."
+      },
+      "int8_float16": {
+        "error": "RuntimeError: cuBLAS failed with status CUBLAS_STATUS_NOT_SUPPORTED"
+      }
+    },
+    "small.en": {
+      "float16": {
+        "vram_mb": 922,
+        "rtf": 0.064,
+        "text": "Enemy radar on teleporter. Behind the top looking. Don't shoot. We are friendly. Let's see what together."
+      },
+      "int8_float16": {
+        "error": "RuntimeError: cuBLAS failed with status CUBLAS_STATUS_NOT_SUPPORTED"
+      }
+    },
+    "distil-large-v3.5": {
+      "float16": {
+        "vram_mb": 2352,
+        "rtf": 0.061,
+        "text": "Enemy radar on the left. Behind the blue gate. Don't shoot. We are friendly. Let's work together."
+      },
+      "int8_float16": {
+        "error": "RuntimeError: cuBLAS failed with status CUBLAS_STATUS_NOT_SUPPORTED"
+      }
+    },
+    "small": {
+      "float16": {
+        "vram_mb": 1019,
+        "rtf": 0.064,
+        "text": "Enemy Raider on the left. Behind the blue gate. Don't shoot. We are friendly. Let's work together."
+      },
+      "int8_float16": {
+        "error": "RuntimeError: cuBLAS failed with status CUBLAS_STATUS_NOT_SUPPORTED"
+      }
+    },
+    "medium": {
+      "float16": {
+        "vram_mb": 2345,
+        "rtf": 0.153,
+        "text": "Enemy raider on the left. Behind the blue gate. Don't shoot. We are friendly. Let's work together."
+      },
+      "int8_float16": {
+        "error": "RuntimeError: cuBLAS failed with status CUBLAS_STATUS_NOT_SUPPORTED"
+      }
+    },
+    "large-v3-turbo": {
+      "float16": {
+        "vram_mb": 2496,
+        "rtf": 0.068,
+        "text": "Enemy raider on to left Behind the blockade Don't shoot We are friendly Let's work together"
+      },
+      "int8_float16": {
+        "error": "RuntimeError: cuBLAS failed with status CUBLAS_STATUS_NOT_SUPPORTED"
+      }
+    },
+    "large-v3": {
+      "float16": {
+        "vram_mb": 4216,
+        "rtf": 0.247,
+        "text": "Enemy raider on the left. Behind the blue gate. Don't shoot. We are friendly. Let's work together."
+      },
+      "int8_float16": {
+        "error": "RuntimeError: cuBLAS failed with status CUBLAS_STATUS_NOT_SUPPORTED"
+      }
+    }
+  }
+}

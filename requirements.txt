@@ -1,14 +1,16 @@
-keyboard
-requests
-deepl
-numpy
-sounddevice
-torch
-PySide6
-faster-whisper
-pywin32
-optimum[onnxruntime]
-transformers
-sentencepiece
-tiktoken
-onnxruntime-directml
+# Runtime (pinned versions verified on Windows 10 22H2 + RTX 5060)
+PySide6==6.10.1
+faster-whisper==1.2.1
+ctranslate2==4.8.3
+onnxruntime==1.23.2
+numpy==2.2.6
+sounddevice==0.5.4
+requests==2.32.5
+deepl==1.27.0
+keyboard==0.13.5
+# GPU runtime for ctranslate2 (no CUDA Toolkit needed, only an NVIDIA driver)
+nvidia-cublas-cu12==12.9.2.10
+nvidia-cudnn-cu12==9.27.0.42
+# Build / test
+pyinstaller==6.18.0
+pytest
