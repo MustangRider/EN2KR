@@ -48,7 +48,6 @@ models/whisper_onnx/
 model/
 silero_vad.jit
 en2kr.ico
-READ ME.txt
 업데이트 아이디어.txt
 
 # Tests
