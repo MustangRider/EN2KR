@@ -74,7 +74,7 @@ DEFAULTS = {
     "audio": {"mode": "process", "process_name": "PioneerGame.exe", "device_name": ""},
     "vad": {"threshold": 0.3, "silence_sec": 0.5, "preroll_sec": 0.3,
             "max_utterance_sec": 12.0, "min_speech_sec": 0.25},
-    "stt": {"mode": "english", "model": "distil-small.en", "language": "en",
+    "stt": {"mode": "english", "model": "auto", "language": "en",
             "auto_languages": ["en", "ko", "de", "fr", "es", "ru", "pl"],
             "skip_korean": True, "int8": False, "device": "auto", "beam_size": 5,
             "use_context": True},
@@ -98,7 +98,7 @@ DEFAULTS = {
                 "fade_sec": 0, "bg_opacity": 0},
     "hotkeys": {"edit_mode": "f12"},
     "logging": {"save_transcripts": True, "retention_days": 14},
-    "ui": {"cpu_warning_dismissed": False, "onboarding_done": False},
+    "ui": {"cpu_warning_dismissed": False, "onboarding_done": False, "int8_unsupported": False},
 }
 
 # Collections the user edits as a whole: a saved value replaces the default.

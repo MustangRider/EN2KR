@@ -172,22 +172,61 @@ def list_audio_apps():
     return apps
 
 
-def resolve_target_pid(process_name, procs=None, audio_pids=None):
+def is_descendant(pid, ancestor, procs):
+    parents = {p.pid: p.ppid for p in procs}
+    seen = set()
+    while pid in parents and pid not in seen:
+        seen.add(pid)
+        pid = parents[pid]
+        if pid == ancestor:
+            return True
+    return False
+
+
+def resolve_target_pid(process_name, procs=None, audio=None):
     """Pick the PID to capture for an exe name.
 
-    Prefers an instance that owns an audio session; otherwise the root-most
-    instance (capture includes child processes, e.g. a launcher stub's game).
+    audio: {pid: AudioApp} from list_audio_apps(). Prefers the instance that is
+    playing sound right now, then any instance owning an audio session, then the
+    root-most instance (capture includes child processes, e.g. a launcher's game).
     """
     procs = procs if procs is not None else list_processes()
+    audio = audio or {}
     want = process_name.lower()
     matches = [p for p in procs if p.name.lower() == want]
     if not matches:
         return None
-    if audio_pids is None:
-        audio_pids = set()
-    with_audio = [p for p in matches if p.pid in audio_pids]
-    if with_audio:
-        return with_audio[0].pid
+
+    def rank(p):
+        a = audio.get(p.pid)
+        playing = bool(a and a.active and a.peak > 0.001)
+        return (not playing, a is None, -(a.peak if a else 0.0))
+
+    best = min(matches, key=rank)
+    if best.pid in audio:
+        return best.pid
     pids = {p.pid for p in matches}
     roots = [p for p in matches if p.ppid not in pids]
     return (roots or matches)[0].pid
+
+
+def playing_elsewhere(process_name, current_pid, procs=None, audio=None):
+    """PID that is playing sound while the captured process is silent, if any.
+
+    Candidates: other instances of the same exe, or descendants of the captured
+    process. Process loopback only includes child processes that already existed
+    when capture started, so a game spawned later by its launcher must be
+    targeted directly.
+    """
+    audio = audio or {}
+    cur = audio.get(current_pid)
+    if cur and cur.active and cur.peak > 0.001:
+        return None
+    procs = procs if procs is not None else list_processes()
+    want = process_name.lower()
+    for a in audio.values():
+        if a.pid == current_pid or not (a.active and a.peak > 0.001):
+            continue
+        if a.name.lower() == want or is_descendant(a.pid, current_pid, procs):
+            return a.pid
+    return None

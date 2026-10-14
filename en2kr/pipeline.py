@@ -83,6 +83,7 @@ class Pipeline:
         self._stt_lock = threading.Lock()
         self._stt_failures = 0
         self._force_cpu = False    # set after repeated GPU failures; not saved to settings
+        self._switch_to = None     # PID found playing while the captured one was silent
         self.segmenter = None
 
     # ---------- lifecycle ----------
@@ -141,7 +142,9 @@ class Pipeline:
     def restart_source(self):
         self._source_dirty.set()
 
-    def reload_stt(self):
+    def reload_stt(self, clear_fallback=False):
+        if clear_fallback:
+            self._force_cpu = False
         cfg = self.settings.section("stt")
         if self._force_cpu:
             cfg["device"] = "cpu"
@@ -197,7 +200,10 @@ class Pipeline:
             with self._source_lock:
                 current = self._source
             if current is not None and current.running and not dirty:
-                continue
+                if self._should_switch_instance(current):
+                    dirty = True
+                else:
+                    continue
             if current is not None:
                 current.stop()
                 with self._source_lock:
@@ -226,13 +232,17 @@ class Pipeline:
                         self.events.status("audio", "wait", "번역할 프로그램을 선택하세요")
                         retry_at = time.monotonic() + 2
                         continue
-                    audio_pids = {a.pid for a in sessions.list_audio_apps()}
-                    pid = sessions.resolve_target_pid(name, audio_pids=audio_pids)
+                    procs = sessions.list_processes()
+                    pid, self._switch_to = self._switch_to, None
+                    if pid is None:
+                        audio = {a.pid: a for a in sessions.list_audio_apps()}
+                        pid = sessions.resolve_target_pid(name, procs=procs, audio=audio)
                     if pid is None:
                         self.events.status("audio", "wait", f"{name} 실행을 기다리는 중")
                         retry_at = time.monotonic() + 2
                         continue
-                    src = process_loopback.ProcessLoopbackCapture(pid, name, self._on_audio, self._on_source_end).start()
+                    exe = next((p.name for p in procs if p.pid == pid), name)
+                    src = process_loopback.ProcessLoopbackCapture(pid, exe, self._on_audio, self._on_source_end).start()
             except Exception as e:
                 log.warning("Audio source start failed: %s", e)
                 self.events.status("audio", "error", f"오디오 연결 실패: {e}")
@@ -241,6 +251,25 @@ class Pipeline:
             with self._source_lock:
                 self._source = src
             self.events.status("audio", "ok", src.description)
+
+    def _should_switch_instance(self, current, every=3.0):
+        """If another instance of the target exe starts playing, follow it."""
+        from .audio import sessions
+        now = time.monotonic()
+        if now < getattr(self, "_next_switch_check", 0) or not hasattr(current, "pid"):
+            return False
+        self._next_switch_check = now + every
+        try:
+            audio = {a.pid: a for a in sessions.list_audio_apps()}
+            name = self.settings.get("audio.process_name") or current.process_name
+            other = sessions.playing_elsewhere(name, current.pid, audio=audio)
+        except Exception as e:
+            log.debug("instance check failed: %s", e)
+            return False
+        if other:
+            log.info("Switching capture from PID %s to playing PID %s", current.pid, other)
+            self._switch_to = other
+        return bool(other)
 
     # ---------- VAD ----------
     def _vad_loop(self):
