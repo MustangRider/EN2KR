@@ -31,7 +31,7 @@ def setup(level=logging.INFO):
         sh.setFormatter(fmt)
         root.addHandler(sh)
 
-    for noisy in ("urllib3", "httpx", "huggingface_hub", "faster_whisper"):
+    for noisy in ("urllib3", "httpx", "httpx2", "httpcore", "huggingface_hub", "faster_whisper"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     def excepthook(exc_type, exc, tb):

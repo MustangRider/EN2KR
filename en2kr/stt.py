@@ -115,7 +115,12 @@ def download(model_id, progress=None):
 
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
     repo = _repo_id(model_id)
-    if is_downloaded(model_id) or progress is None:
+    if is_downloaded(model_id):
+        try:  # no network round-trip for a model we already have (works offline)
+            return snapshot_download(repo, allow_patterns=_ALLOW, local_files_only=True)
+        except Exception:
+            pass
+    if progress is None:
         return snapshot_download(repo, allow_patterns=_ALLOW)
 
     stop = threading.Event()

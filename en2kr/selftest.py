@@ -6,11 +6,14 @@ Uses the user's real settings (API keys included) but never touches audio
 devices. Exit code 0 when at least one line was recognised.
 """
 import argparse
+import os
+import sys
 import time
 import wave
 
 import numpy as np
 
+from . import paths
 from .pipeline import Pipeline, PipelineEvents
 
 
@@ -91,6 +94,8 @@ def main(argv):
     ap.add_argument("--model")
     ap.add_argument("--mode", choices=["english", "fixed", "auto"])
     args = ap.parse_args(argv)
+    if not args.out and sys.stdout is None:  # windowed exe: no console to print to
+        args.out = os.path.join(paths.app_dir(), "selftest.txt")
     log.setup()
     report = format_report(run(Settings().load(), args.selftest, args.model, args.mode))
     if args.out:

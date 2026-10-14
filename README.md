@@ -1,28 +1,87 @@
 # EN2KR4GAMING
 
-실시간 게임 음성 번역 오버레이 (Whisper + DeepL/Azure)
+실시간 게임 음성 번역 오버레이. 게임(또는 원하는 프로그램)의 소리만 캡처해서
+Whisper로 받아 적고, 번역 API로 한국어로 옮겨 게임 화면 위에 자막으로 띄웁니다.
 
-## 실행 전 준비
-1) Python 설치
-2) 의존성 설치
+## v2에서 달라진 점
 
-3) 설정 파일 생성
-- settings_en2kr_whisper_context.sample.json 을 복사해
-  settings_en2kr_whisper_context.json 으로 저장 후 API 키 입력
+- **VB-Cable 불필요**: Windows 프로세스 루프백 캡처로 선택한 프로그램의 소리만 직접 받습니다.
+  게임 소리는 평소처럼 헤드셋으로 들립니다. (OBS '애플리케이션 오디오 캡처'와 같은 방식, 게임 프로세스는 건드리지 않음)
+- **프로그램 안에서 바로 설정**: 메인 창의 '번역할 프로그램'에서 소리를 내는 앱을 고르면 끝. ARC Raiders(`PioneerGame.exe`)는 기본값이고, 게임을 재시작하면 자동으로 다시 연결됩니다.
+- **인식 엔진 선택**: 영어 전용 / 다국어·언어 고정 / 다국어·자동 감지(한국어 음성 건너뛰기) 중에서 고르고, 모델 크기를 **실측 VRAM·속도와 현재 GPU 여유 VRAM**을 보며 정합니다.
+- **번역 API 여러 개 + 자동 전환**: DeepL, Azure, Google Cloud Translation, OpenAI 호환 LLM(Gemini·Groq·OpenRouter·Ollama). 한도 초과·오류 시 다음 API로 넘어갑니다.
+- **용어집·슬랭**: 어떤 번역 API를 써도 동작합니다 (긴 용어 우선, 복수형 자동 처리).
+- **배포 크기**: torch 제거(음성 감지를 ONNX로 전환)로 약 4GB → 약 2GB.
+- v1 버그 수정: 이전 문장 단어 중복, 미완성 문장 이중 번역, 설정 유실(BOM·덮어쓰기), 마이크 오선택, 작업 스레드 무음 사망, 단축키 스레드 크래시, 오버레이 긴 문장 잘림 등.
 
-## 실행
-python EN2KR4GAMING.py
+## 요구 사항
 
-## 모델 파일
-- models/silero_vad/silero_vad.jit 필요
-- 네트워크에서 자동 다운로드를 허용하려면 실행 전에 환경변수 설정:
-  - EN2KR_ALLOW_VAD_DOWNLOAD=1
+- Windows 10 22H2 / Windows 11 (프로세스 오디오 캡처 사용, Windows 10 19045에서 확인)
+- NVIDIA GPU 권장 (그래픽 드라이버만 있으면 됨, CUDA Toolkit 불필요). GPU가 없으면 CPU로 동작하지만 느립니다.
+- 번역 API 키 1개 이상
 
-## 제외된 항목
-- 로그, 캐시, 빌드 결과물, 가상환경, 개인 설정 파일은 Git에 포함되지 않습니다.
+| 번역 API | 무료 한도 | 비고 |
+|---|---|---|
+| DeepL | 월 50만 자 | 품질 좋음 |
+| Azure Translator (F0) | 월 200만 자 | 지역(region) 입력 필요 |
+| Google Cloud Translation | 월 50만 자 | 결제 계정 연결 필요 |
+| Gemini/Groq 등 (OpenAI 호환) | 서비스마다 다름 | 슬랭·문맥에 강함, 느림. 무료 티어는 입력이 학습에 쓰일 수 있음 |
 
-## 자동 업로드 (저장 시 자동 커밋/푸시)
-1) PowerShell에서 아래 스크립트를 실행
-  - auto_push.ps1
-2) 파일 저장 시 자동으로 commit/push 됩니다.
-3) 중지하려면 PowerShell 창을 닫으면 됩니다.
+무료 한도는 바뀔 수 있으니 각 서비스의 요금 페이지에서 확인하세요.
+
+## 사용법
+
+1. 실행 후 '번역 API'에서 키 등록 (여러 개 등록 시 위에서부터 순서대로 사용)
+2. 게임 실행 → '번역할 프로그램'에서 게임 선택 (ARC Raiders는 기본값)
+3. 필요하면 '인식 엔진'에서 종류·크기 선택
+4. **F12**로 오버레이 편집 모드: 드래그로 이동, 오른쪽 아래 모서리로 크기 조절, `=`/`-` 글자 크기, Ctrl+휠 줄 수, Shift+휠 줄 간격
+5. 게임은 '테두리 없는 창 모드(Borderless)'로 실행하세요. 독점 전체 화면에서는 오버레이가 보이지 않습니다.
+
+설정·로그·번역 기록은 `%APPDATA%\EN2KR4GAMING`에 저장됩니다. v1의 `settings_en2kr_whisper_context.json`이
+exe 옆에 있으면 처음 실행할 때 자동으로 가져옵니다.
+
+## 개발
+
+```powershell
+py -3.10 -m venv .venv            # Python 3.10+
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python EN2KR4GAMING.py
+.venv\Scripts\python -m pytest tests
+```
+
+- 게임 없이 전체 파이프라인 확인: `python EN2KR4GAMING.py --selftest tests\assets\speech_en.wav [--model distil-large-v3.5] [--mode english|fixed|auto] [--out report.txt]`
+- 모델 VRAM·속도 재측정(인식 엔진 창에 표시되는 값): `python tools\measure_models.py tests\assets\speech_en.wav`
+
+### 빌드
+
+```powershell
+.venv\Scripts\pyinstaller EN2KR4GAMING.spec --noconfirm
+```
+
+결과물: `dist\EN2KR4GAMING\` 폴더 전체를 배포합니다 (exe 단독 실행 불가).
+
+### 구조
+
+```
+EN2KR4GAMING.py         실행기
+en2kr/
+  app.py                진입점 (Qt, 단일 실행, --selftest)
+  settings.py           설정 (BOM 허용, 원자적 저장, DPAPI 키 암호화, v1 이전)
+  audio/                프로세스 루프백 캡처, 오디오 세션 목록, 장치 캡처(고급)
+  vad.py                Silero VAD(ONNX) + 샘플 기준 발화 분할
+  stt.py                faster-whisper 엔진·모델 카탈로그·언어 판별
+  translate/            번역 API 어댑터, 용어집/슬랭, 비동기 번역 서비스
+  filters.py            환청 필터
+  pipeline.py           오디오 → VAD → STT → 번역 스레드 연결
+  ui/                   메인 창, 오버레이, 설정 창
+tests/                  pytest (음성 샘플 포함)
+tools/measure_models.py 모델 VRAM·속도 측정
+```
+
+## 문제 해결
+
+- **소리가 안 잡힘**: 상단 '오디오' 상태 확인. 게임이 소리를 내기 시작하면 자동으로 해당 프로세스에 연결됩니다. 다른 앱이면 '번역할 프로그램'에서 직접 선택하세요.
+- **F12가 안 먹음**: 게임이 관리자 권한으로 실행 중이면 이 프로그램도 관리자 권한으로 실행하세요. 단축키는 '오버레이·단축키·기록'에서 바꿀 수 있습니다.
+- **로그**: `%APPDATA%\EN2KR4GAMING\logs\app.log`
+
+문의: huneejung@naver.com
