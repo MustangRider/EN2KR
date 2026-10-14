@@ -12,8 +12,14 @@ log = logging.getLogger(__name__)
 
 CLSID_MMDeviceEnumerator = guid("{BCDE0395-E52F-467C-8E3D-C4579291692E}")
 IID_IMMDeviceEnumerator = guid("{A95664D2-9614-4F35-A746-DE8DB63617E6}")
+# Undocumented but long-stable interface used by the Sound control panel (and by
+# SoundSwitch, EarTrumpet, ...) to change the default device. Windows has no
+# public API for this, so callers must verify the result and fall back to manual steps.
+CLSID_PolicyConfigClient = guid("{870AF99C-171D-4F9E-AF0D-E63DF40C2BC9}")
+IID_IPolicyConfig = guid("{F8679F50-850A-41CF-9C72-430F290290C8}")
 RENDER, CAPTURE = 0, 1
 DEVICE_STATE_ACTIVE = 1
+ROLES = (0, 1, 2)  # eConsole, eMultimedia, eCommunications
 
 
 class _PropertyKey(ctypes.Structure):
@@ -60,19 +66,30 @@ def _friendly_name(dev):
         release(store.value)
 
 
-def _enumerate(flow):
-    out = []
+def _create_enumerator():
     enum = ctypes.c_void_p()
     check(ole32.CoCreateInstance(ctypes.byref(CLSID_MMDeviceEnumerator), None, 23,
                                  ctypes.byref(IID_IMMDeviceEnumerator), ctypes.byref(enum)), "MMDeviceEnumerator")
-    coll = default = None
-    try:
+    return enum.value
+
+
+def _default_ids(enum, flow):
+    ids = {}
+    for role in ROLES:
         d = ctypes.c_void_p()
-        default_id = ""
         if vcall(enum, 4, HRESULT, [ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)],
-                 flow, 0, ctypes.byref(d)) == 0:
-            default = d.value
-            default_id = _device_id(default)
+                 flow, role, ctypes.byref(d)) == 0:
+            ids[role] = _device_id(d.value)
+            release(d.value)
+    return ids
+
+
+def _enumerate(flow):
+    out = []
+    enum = _create_enumerator()
+    coll = None
+    try:
+        default_id = _default_ids(enum, flow).get(0, "")
         c = ctypes.c_void_p()
         check(vcall(enum, 3, HRESULT, [ctypes.c_int, wt.DWORD, ctypes.POINTER(ctypes.c_void_p)],
                     flow, DEVICE_STATE_ACTIVE, ctypes.byref(c)), "EnumAudioEndpoints")
@@ -90,26 +107,61 @@ def _enumerate(flow):
                 release(dev.value)
     finally:
         release(coll)
-        release(default)
-        release(enum.value)
+        release(enum)
     return out
 
 
-def list_endpoints(flow):
-    """Active endpoints for RENDER (outputs) or CAPTURE (inputs)."""
-    box = {"result": []}
+def _in_mta(fn, default):
+    """Run a COM call on a short-lived MTA thread (the GUI thread is STA)."""
+    box = {"result": default}
 
     def worker():
         try:
             with Apartment():
-                box["result"] = _enumerate(flow)
+                box["result"] = fn()
         except Exception as e:  # pragma: no cover - depends on audio stack
-            log.warning("Endpoint enumeration failed: %s", e)
+            log.warning("Audio endpoint call failed: %s", e)
 
     t = threading.Thread(target=worker, name="endpoints", daemon=True)
     t.start()
     t.join(5)
     return box["result"]
+
+
+def list_endpoints(flow):
+    """Active endpoints for RENDER (outputs) or CAPTURE (inputs)."""
+    return _in_mta(lambda: _enumerate(flow), [])
+
+
+def default_ids(flow):
+    """{role: endpoint id} for eConsole / eMultimedia / eCommunications."""
+    def work():
+        enum = _create_enumerator()
+        try:
+            return _default_ids(enum, flow)
+        finally:
+            release(enum)
+    return _in_mta(work, {})
+
+
+def set_default(endpoint_id, flow, roles=ROLES):
+    """Make an endpoint the Windows default for the given roles. Returns True if verified."""
+    def work():
+        pc = ctypes.c_void_p()
+        check(ole32.CoCreateInstance(ctypes.byref(CLSID_PolicyConfigClient), None, 23,
+                                     ctypes.byref(IID_IPolicyConfig), ctypes.byref(pc)), "PolicyConfig")
+        try:
+            for role in roles:
+                check(vcall(pc.value, 13, HRESULT, [ctypes.c_wchar_p, ctypes.c_int], endpoint_id, role),
+                      "SetDefaultEndpoint")
+        finally:
+            release(pc.value)
+        return True
+
+    if not _in_mta(work, False):
+        return False
+    now = default_ids(flow)
+    return all(now.get(r) == endpoint_id for r in roles)
 
 
 def default_render_name():

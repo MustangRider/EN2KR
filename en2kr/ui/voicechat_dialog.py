@@ -1,5 +1,6 @@
 """Setup for "voice chat only" (VB-CABLE)."""
 import subprocess
+import time
 import webbrowser
 
 from PySide6 import QtCore, QtWidgets
@@ -131,43 +132,87 @@ class VoiceChatDialog(QtWidgets.QDialog):
             self.steps.setText(_game_steps())
         problems = []
         if vbcable.default_output_is_cable():
-            problems.append(("재생", "Windows 기본 <b>출력 장치</b>가 VB-CABLE로 바뀌어 있습니다. 이대로면 게임 소리가 안 들립니다. "
-                                    "<b>재생</b> 탭에서 헤드셋을 기본 장치로 되돌리세요."))
+            problems.append("Windows 기본 <b>출력 장치</b>가 VB-CABLE로 바뀌어 있습니다. 이대로면 게임 소리가 안 들립니다.")
         if vbcable.default_input_is_cable():
-            problems.append(("녹음", "Windows 기본 <b>녹음 장치(마이크)</b>가 VB-CABLE로 바뀌어 있습니다. 게임·디스코드 마이크가 "
-                                    "'시스템 기본값'이면 내 목소리가 전달되지 않고, 이 모드에서는 상대 음성 채팅이 다시 게임으로 "
-                                    "들어갈 수 있습니다. <b>녹음</b> 탭에서 원래 마이크를 '기본 장치'와 '기본 통신 장치'로 되돌리세요."))
-        if problems:
-            self.warn.setText("<br><br>".join(text for _, text in problems))
-            self.warn.show()
-            if not hasattr(self, "_sound_btn"):
-                self._sound_btn = QtWidgets.QPushButton()
-                self.warn.parentWidget().layout().addWidget(self._sound_btn)
-            tab = problems[-1][0]
-            self._sound_btn.setText(f"Windows 사운드 설정 열기 ({tab} 탭)")
-            try:
-                self._sound_btn.clicked.disconnect()
-            except (RuntimeError, TypeError):
-                pass
-            # mmsys.cpl,,0 = 재생 탭, ,,1 = 녹음 탭
-            self._sound_btn.clicked.connect(
-                lambda: subprocess.Popen(["control", "mmsys.cpl,,1" if tab == "녹음" else "mmsys.cpl,,0"]))
-            self._sound_btn.show()
-        else:
-            self.warn.hide()
-            if hasattr(self, "_sound_btn"):
-                self._sound_btn.hide()
+            problems.append("Windows 기본 <b>녹음 장치(마이크)</b>가 VB-CABLE로 바뀌어 있습니다. 게임·디스코드 마이크가 "
+                            "'시스템 기본값'이면 내 목소리가 전달되지 않고, 이 모드에서는 상대 음성 채팅이 다시 게임으로 "
+                            "들어갈 수 있습니다.")
+        if not hasattr(self, "_fix_row"):
+            self._fix_row = QtWidgets.QWidget()
+            row = QtWidgets.QHBoxLayout(self._fix_row)
+            row.setContentsMargins(0, 0, 0, 0)
+            self._fix_btn = QtWidgets.QPushButton("원래 장치로 되돌리기")
+            self._fix_btn.setObjectName("primary")
+            self._fix_btn.clicked.connect(self._fix_defaults)
+            self._sound_btn = QtWidgets.QPushButton("Windows 사운드 설정 열기")
+            self._sound_btn.clicked.connect(lambda: subprocess.Popen(["control", "mmsys.cpl"]))
+            row.addWidget(self._fix_btn)
+            row.addWidget(self._sound_btn)
+            row.addStretch()
+            self.warn.parentWidget().layout().addWidget(self._fix_row)
+        self.warn.setText("<br>".join(problems))
+        self.warn.setVisible(bool(problems))
+        self._fix_row.setVisible(bool(problems))
+
+    # ---------- default devices ----------
+    def _saved_snapshot(self):
+        return self.settings.get("audio.voice.prev_defaults", {}) or {}
+
+    def _fix_defaults(self, _checked=False, chosen=None, quiet=False):
+        """Undo Windows switching the default speaker/mic to VB-CABLE."""
+        result = vbcable.fix_cable_defaults(self._saved_snapshot(), chosen)
+        for flow, candidates in result.need_choice.items():
+            label = vbcable.FLOW_LABEL[flow]
+            names = [e.name for e in candidates]
+            name, ok = QtWidgets.QInputDialog.getItem(
+                self, "원래 장치 선택", f"기본 {label}으로 쓸 장치를 고르세요:", names, 0, False)
+            if not ok:
+                result.failed.append(label)
+                continue
+            picked = candidates[names.index(name)]
+            sub = vbcable.fix_cable_defaults(self._saved_snapshot(), {**(chosen or {}), flow: picked.id})
+            result.changed += sub.changed
+            result.failed += sub.failed
+        self._refresh_status()
+        if result.failed:
+            steps = "<br>".join(f"• {vbcable.MANUAL_STEPS[f]}" for f in dict.fromkeys(result.failed))
+            box = QtWidgets.QMessageBox(self)
+            box.setWindowTitle("기본 장치 되돌리기")
+            box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+            box.setTextFormat(QtCore.Qt.TextFormat.RichText)
+            box.setText("자동으로 되돌리지 못했습니다. 아래처럼 직접 바꿔 주세요.<br><br>" + steps)
+            open_btn = box.addButton("Windows 사운드 설정 열기", QtWidgets.QMessageBox.ButtonRole.ActionRole)
+            box.addButton("닫기", QtWidgets.QMessageBox.ButtonRole.RejectRole)
+            box.exec()
+            if box.clickedButton() is open_btn:
+                subprocess.Popen(["control", "mmsys.cpl"])
+        elif result.changed and not quiet:
+            QtWidgets.QMessageBox.information(self, "기본 장치 되돌리기",
+                                              "원래 장치로 되돌렸습니다.\n" + "\n".join(result.changed))
+        return result
 
     def _install(self):
         self.install_btn.setEnabled(False)
         self.status.setText("공식 패키지 다운로드 중...")
+        # Remember the user's devices: Windows may switch defaults to VB-CABLE during setup.
+        voice = self.settings.get("audio.voice", {}) or {}
+        voice["prev_defaults"] = vbcable.snapshot_defaults()
+        self.settings.set("audio.voice", voice)
+        self.settings.save()
         worker = Worker(self)
 
         def job():
             path = vbcable.download(lambda d, t: self.install_progress.emit(
                 f"다운로드 중... {d // 1024:,} / {t // 1024:,} KB" if t else f"다운로드 중... {d // 1024:,} KB"))
             self.install_progress.emit("VB-CABLE 설치 프로그램이 열렸습니다. 'Install Driver'를 눌러 설치를 마치세요.")
-            return vbcable.run_setup(path)
+            code = vbcable.run_setup(path)
+            if code is not None:
+                self.install_progress.emit("설치 확인 중...")
+                for _ in range(8):  # the new device (and Windows' default switch) can take a few seconds
+                    time.sleep(1)
+                    if vbcable.is_installed() and (vbcable.default_input_is_cable() or vbcable.default_output_is_cable()):
+                        break
+            return code
 
         def done(code, err):
             self.install_btn.setEnabled(True)
@@ -177,17 +222,25 @@ class VoiceChatDialog(QtWidgets.QDialog):
             elif code is None:
                 QtWidgets.QMessageBox.information(self, "VB-CABLE 설치", "관리자 권한 요청이 취소되었습니다.")
             self._refresh_status()
-            if not err and code is not None:
-                msg = ("설치가 끝났습니다. 장치가 제대로 동작하려면 컴퓨터를 재부팅하세요." if vbcable.is_installed()
-                       else "설치 프로그램이 끝났지만 장치가 아직 보이지 않습니다. 재부팅한 뒤 다시 확인하세요.")
-                QtWidgets.QMessageBox.information(self, "VB-CABLE 설치", msg)
+            if err or code is None:
+                return
+            restored = []
+            if vbcable.default_input_is_cable() or vbcable.default_output_is_cable():
+                restored = self._fix_defaults(quiet=True).changed
+            msg = ("설치가 끝났습니다. 장치가 제대로 동작하려면 컴퓨터를 재부팅하세요." if vbcable.is_installed()
+                   else "설치 프로그램이 끝났지만 장치가 아직 보이지 않습니다. 재부팅한 뒤 다시 확인하세요.")
+            if restored:
+                msg += "\n\nWindows가 기본 장치를 VB-CABLE로 바꿔서 원래대로 되돌렸습니다:\n" + "\n".join(restored)
+            QtWidgets.QMessageBox.information(self, "VB-CABLE 설치", msg)
 
         worker.finished.connect(done)
         worker.run(job)
 
     def apply(self):
-        self.settings.set("audio.voice", {"monitor": self.monitor.isChecked(),
-                                          "monitor_device": self.device.currentData() or "",
-                                          "monitor_volume": self.volume.value()})
+        voice = self.settings.get("audio.voice", {}) or {}
+        voice.update({"monitor": self.monitor.isChecked(),
+                      "monitor_device": self.device.currentData() or "",
+                      "monitor_volume": self.volume.value()})
+        self.settings.set("audio.voice", voice)
         self.settings.set("audio.mode", "voicechat")
         self.settings.save()

@@ -14,8 +14,10 @@ import zipfile
 
 import requests
 
+from dataclasses import dataclass, field
+
 from .. import paths
-from .endpoints import CAPTURE, RENDER, list_endpoints
+from .endpoints import CAPTURE, RENDER, default_ids, list_endpoints, set_default
 
 log = logging.getLogger(__name__)
 
@@ -46,13 +48,90 @@ def is_installed():
     return bool(cable_render_name()) and any(is_cable_endpoint(e.name) for e in list_endpoints(CAPTURE))
 
 
+def _is_vb(name):
+    return "vb-audio virtual cable" in name.lower()
+
+
+def _cable_roles(flow):
+    """Roles (console/multimedia/communications) whose default device is VB-CABLE."""
+    names = {e.id: e.name for e in list_endpoints(flow)}
+    return [role for role, dev in default_ids(flow).items() if _is_vb(names.get(dev, ""))]
+
+
 def default_output_is_cable():
-    return any(e.is_default and "vb-audio virtual cable" in e.name.lower() for e in list_endpoints(RENDER))
+    return bool(_cable_roles(RENDER))
 
 
 def default_input_is_cable():
     """Windows often makes CABLE Output the default microphone when VB-CABLE is installed."""
-    return any(e.is_default and "vb-audio virtual cable" in e.name.lower() for e in list_endpoints(CAPTURE))
+    return bool(_cable_roles(CAPTURE))
+
+
+def snapshot_defaults():
+    """Current non-VB-CABLE default devices, saved before running the setup."""
+    snap = {}
+    for flow in (RENDER, CAPTURE):
+        names = {e.id: e.name for e in list_endpoints(flow)}
+        snap[str(flow)] = {str(role): dev for role, dev in default_ids(flow).items()
+                           if dev in names and not _is_vb(names[dev])}
+    return snap
+
+
+@dataclass
+class FixResult:
+    changed: list = field(default_factory=list)      # human-readable "마이크 → Blue Snowball"
+    failed: list = field(default_factory=list)       # flows that could not be fixed ("출력"/"마이크")
+    need_choice: dict = field(default_factory=dict)  # flow -> [Endpoint] when the target is ambiguous
+
+
+FLOW_LABEL = {RENDER: "출력", CAPTURE: "마이크"}
+
+
+def fix_cable_defaults(snapshot=None, chosen=None):
+    """Point every default role that is VB-CABLE back to a real device.
+
+    Target per role: the user's choice, else the device saved in ``snapshot``
+    before installation, else the only non-VB-CABLE device of that kind. If
+    several are possible the caller asks the user (``need_choice``).
+    """
+    result = FixResult()
+    for flow in (RENDER, CAPTURE):
+        eps = {e.id: e for e in list_endpoints(flow)}
+        current = default_ids(flow)
+        bad = [r for r, dev in current.items() if dev in eps and _is_vb(eps[dev].name)]
+        if not bad:
+            continue
+        real = [e for e in eps.values() if not _is_vb(e.name)]
+        saved = (snapshot or {}).get(str(flow), {})
+        targets = {}
+        for role in bad:
+            dev = (chosen or {}).get(flow) or saved.get(str(role))
+            if dev not in eps or _is_vb(eps[dev].name):
+                dev = real[0].id if len(real) == 1 else None
+            if dev is None:
+                break
+            targets.setdefault(dev, []).append(role)
+        else:
+            ok = True
+            for dev, roles in targets.items():
+                if set_default(dev, flow, roles):
+                    result.changed.append(f"{FLOW_LABEL[flow]} → {eps[dev].name}")
+                else:
+                    ok = False
+            if not ok:
+                result.failed.append(FLOW_LABEL[flow])
+            continue
+        if real:
+            result.need_choice[flow] = real
+        else:
+            result.failed.append(FLOW_LABEL[flow])
+    return result
+
+
+MANUAL_STEPS = {
+    "출력": "Win + R → mmsys.cpl → <b>재생</b> 탭 → 헤드셋(스피커) 우클릭 → '기본 장치로 설정'과 '기본 통신 장치로 설정'",
+    "마이크": "Win + R → mmsys.cpl → <b>녹음</b> 탭 → 사용하는 마이크 우클릭 → '기본 장치로 설정'과 '기본 통신 장치로 설정'",
+}
 
 
 def download(progress=None):
