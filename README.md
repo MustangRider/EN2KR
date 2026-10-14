@@ -44,7 +44,8 @@ Whisper로 받아 적고, 번역 API로 한국어로 옮겨 게임 화면 위에
 
 ### 클라우드 인식 (Groq)
 
-1. https://console.groq.com 가입 → API Keys에서 키 발급 (`gsk_...`)
+1. 키 발급 (무료, 카드 등록 없음): https://console.groq.com/keys 에서 가입·로그인 → **Create API Key** → 이름 입력 → `gsk_`로 시작하는 키 복사.
+   키는 만들 때 한 번만 보입니다. 앱의 '키 발급 안내' 버튼에도 같은 안내가 있습니다.
 2. '인식 엔진' → 실행 위치 **클라우드 · Groq** → 키 입력 → '연결 테스트'
 3. 모델은 `whisper-large-v3`(정확도 우선, 추천) 또는 `whisper-large-v3-turbo`
 

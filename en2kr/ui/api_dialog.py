@@ -6,6 +6,7 @@ from PySide6 import QtCore, QtWidgets
 
 from ..settings import OPENAI_PRESETS
 from ..translate import providers as P
+from . import key_guides
 from .bridge import Worker
 
 INFO = {
@@ -132,6 +133,14 @@ class ApiDialog(QtWidgets.QDialog):
             guide = QtWidgets.QPushButton("키 발급 안내")
             guide.clicked.connect(lambda: webbrowser.open(url))
             btn_row.addWidget(guide)
+        if pid == "openai":
+            # Only Groq has a written guide (it is also the cloud speech-recognition key).
+            groq_guide = QtWidgets.QPushButton("Groq 키 발급 안내")
+            groq_guide.clicked.connect(lambda: key_guides.show_groq(self))
+            btn_row.addWidget(groq_guide)
+            sync = lambda *_a, pr=fields["preset"], b=groq_guide: b.setVisible(pr.currentData() == "groq")
+            fields["preset"].currentIndexChanged.connect(sync)
+            sync()
         btn_row.addStretch()
         form.addRow(btn_row)
         result = QtWidgets.QLabel("")

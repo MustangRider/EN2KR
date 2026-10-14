@@ -9,6 +9,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 import time
 
 from .. import gpu, stt
+from . import key_guides
 from .bridge import Worker
 
 MODES = [
@@ -57,7 +58,7 @@ class EngineDialog(QtWidgets.QDialog):
         cloud_cfg = self.cfg.get("cloud") or {}
         self.cloud_key = QtWidgets.QLineEdit(cloud_cfg.get("key", ""))
         self.cloud_key.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
-        self.cloud_key.setPlaceholderText("gsk_... (console.groq.com 에서 무료 발급)")
+        self.cloud_key.setPlaceholderText("gsk_... (아래 '키 발급 안내' 참고)")
         self.cloud_model = QtWidgets.QComboBox()
         for mid, desc in stt.CLOUD_MODELS.items():
             self.cloud_model.addItem(f"{mid} - {desc}", mid)
@@ -68,6 +69,9 @@ class EngineDialog(QtWidgets.QDialog):
         self.cloud_result = QtWidgets.QLabel("")
         self.cloud_result.setWordWrap(True)
         test_row.addWidget(self.cloud_test)
+        guide = QtWidgets.QPushButton("키 발급 안내")
+        guide.clicked.connect(lambda: key_guides.show_groq(self))
+        test_row.addWidget(guide)
         test_row.addWidget(self.cloud_result, 1)
         cf.addRow("Groq API 키:", self.cloud_key)
         cf.addRow("모델:", self.cloud_model)
@@ -257,7 +261,7 @@ class EngineDialog(QtWidgets.QDialog):
     def _test_cloud(self):
         key = self.cloud_key.text().strip()
         if not key:
-            self.cloud_result.setText("<span style='color:#f0a020'>키를 먼저 입력하세요.</span>")
+            self.cloud_result.setText("<span style='color:#f0a020'>키를 먼저 입력하세요. 없으면 '키 발급 안내'를 보세요.</span>")
             return
         self.cloud_result.setText("테스트 중...")
         client = stt.GroqStt(key, self.cloud_model.currentData())
