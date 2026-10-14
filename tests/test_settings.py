@@ -96,3 +96,12 @@ def test_old_text_chat_slang_defaults_are_replaced(tmp_path):
     assert Settings(str(p)).load().get("slang") == DEFAULT_SLANG
     p.write_text(json.dumps({"slang": {"gg": "good game", "flank": "go around"}}), encoding="utf-8")
     assert Settings(str(p)).load().get("slang") == {"gg": "good game", "flank": "go around"}  # user-edited: kept
+
+
+def test_voicechat_mode_from_v2_1_falls_back_to_process(tmp_path):
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"audio": {"mode": "voicechat", "process_name": "Game.exe",
+                                       "voice": {"monitor": True, "monitor_volume": 101}}}), encoding="utf-8")
+    audio = Settings(str(p)).load().section("audio")
+    assert audio["mode"] == "process" and audio["process_name"] == "Game.exe"
+    assert "voice" not in audio

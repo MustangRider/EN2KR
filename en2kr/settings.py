@@ -76,10 +76,8 @@ OPENAI_PRESETS = {
 
 DEFAULTS = {
     "version": 2,
-    # mode: "process" (one program's audio), "voicechat" (a game's voice chat via VB-CABLE),
-    # "device" (any input device, advanced)
-    "audio": {"mode": "process", "process_name": "", "device_name": "",
-              "voice": {"monitor": True, "monitor_device": "", "monitor_volume": 100}},
+    # mode: "process" (one program's audio) or "device" (any input device, advanced)
+    "audio": {"mode": "process", "process_name": "", "device_name": ""},
     "vad": {"threshold": 0.3, "silence_sec": 0.5, "preroll_sec": 0.3,
             "max_utterance_sec": 12.0, "min_speech_sec": 0.25},
     # engine: "local" (Whisper on this PC) or "cloud" (Whisper on Groq, no VRAM use)
@@ -123,6 +121,13 @@ def _merge(defaults, saved):
         else:
             out[k] = copy.deepcopy(v)
     return out
+
+
+def _drop_voicechat(audio):
+    """v2.0-2.1 had a VB-CABLE voice-chat mode; fall back to capturing the chosen program."""
+    audio.pop("voice", None)
+    if audio.get("mode") == "voicechat":
+        audio["mode"] = "process"
 
 
 def _map_secrets(data, fn):
@@ -183,6 +188,8 @@ class Settings:
                     self._data = _map_secrets(_merge(DEFAULTS, saved), secret_store.decrypt)
                     if self._data.get("slang") == _OLD_DEFAULT_SLANG:
                         self._data["slang"] = dict(DEFAULT_SLANG)
+                    if isinstance(self._data.get("audio"), dict):
+                        _drop_voicechat(self._data["audio"])
                     return self
                 except (OSError, ValueError) as e:
                     backup = f"{self.path}.corrupt-{time.strftime('%Y%m%d-%H%M%S')}"

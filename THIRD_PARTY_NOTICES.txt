@@ -28,6 +28,3 @@ Not bundled
 -----------
 - Whisper speech models are downloaded on first use from Hugging Face
   (OpenAI Whisper / distil-whisper: MIT).
-- VB-CABLE is not included. If the user chooses to install it, the program
-  downloads the official package from vb-audio.com and runs VB-Audio's own
-  setup. VB-CABLE is donationware by VB-Audio Software (www.vb-cable.com).

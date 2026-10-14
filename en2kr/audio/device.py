@@ -1,4 +1,4 @@
-"""Capture from an input device (advanced fallback, e.g. VB-Cable "CABLE Output").
+"""Capture from an input device (advanced fallback, e.g. "Stereo Mix" where process capture is unavailable).
 
 Unlike v1 this never picks a device on its own: if the configured device is
 missing it fails visibly instead of silently falling back to a microphone.
@@ -28,7 +28,7 @@ def list_input_devices():
         api = apis[d["hostapi"]]["name"]
         if d["max_input_channels"] > 0 and api in _PREFERRED_APIS:
             out.append({"index": i, "name": d["name"], "hostapi": api, "key": device_key(d["name"], api)})
-    out.sort(key=lambda d: (_PREFERRED_APIS.index(d["hostapi"]), "cable" not in d["name"].lower(), d["name"]))
+    out.sort(key=lambda d: (_PREFERRED_APIS.index(d["hostapi"]), d["name"]))
     return out
 
 

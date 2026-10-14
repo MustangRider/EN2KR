@@ -195,7 +195,7 @@ class Pipeline:
             self._source_dirty.set()
 
     def _source_loop(self):
-        from .audio import device, process_loopback, sessions, voicechat
+        from .audio import device, process_loopback, sessions
 
         retry_at = 0.0
         while self._running:
@@ -225,18 +225,7 @@ class Pipeline:
                 retry_at = time.monotonic() + 3600
                 continue
             try:
-                if cfg.get("mode") == "voicechat":
-                    from .audio import vbcable
-                    if vbcable.default_input_is_cable():
-                        self.events.notice("Windows 기본 마이크가 VB-CABLE(CABLE Output)입니다. 게임 마이크가 '시스템 기본값'이면 "
-                                           "내 목소리 대신 상대 음성 채팅이 송출될 수 있습니다. "
-                                           "'음성 채팅 설정' → '원래 장치로 되돌리기'를 누르세요.")
-                    v = cfg.get("voice", {})
-                    src = voicechat.VoiceChatCapture(
-                        self._on_audio, self._on_source_end, monitor=v.get("monitor", True),
-                        monitor_device=v.get("monitor_device", ""),
-                        volume=v.get("monitor_volume", 100) / 100).start()
-                elif cfg.get("mode") == "device":
+                if cfg.get("mode") == "device":
                     key = cfg.get("device_name") or ""
                     if not key:
                         self.events.status("audio", "error", "입력 장치가 선택되지 않았습니다")
