@@ -17,7 +17,28 @@ WS_EX_TRANSPARENT = 0x20
 WS_EX_LAYERED = 0x80000
 WS_EX_NOACTIVATE = 0x08000000
 MAX_ENTRIES = 100
-FADE_OUT_SEC = 1.0
+FADE_OUT_SEC = 1.0      # time to fade a line from opaque to invisible
+COLLAPSE_SEC = 0.25     # then its space closes so the lines below slide up instead of jumping
+FRAME_MS = 16           # repaint interval while something is animating (~60 fps)
+
+
+def _smoothstep(x):
+    x = min(max(x, 0.0), 1.0)
+    return x * x * (3 - 2 * x)
+
+
+def fade_state(age, fade_sec):
+    """(alpha, height_factor) of a line ``age`` seconds after its last update; None once gone."""
+    if fade_sec <= 0:
+        return 1.0, 1.0
+    t = age - fade_sec
+    if t < 0:
+        return 1.0, 1.0
+    if t < FADE_OUT_SEC:
+        return 1.0 - _smoothstep(t / FADE_OUT_SEC), 1.0
+    if t < FADE_OUT_SEC + COLLAPSE_SEC:
+        return 0.0, 1.0 - _smoothstep((t - FADE_OUT_SEC) / COLLAPSE_SEC)
+    return None
 
 
 @dataclass
@@ -45,7 +66,8 @@ class OverlayWindow(QtWidgets.QWidget):
         self.grip = QtWidgets.QSizeGrip(self)
         self.grip.setFixedSize(24, 24)
         self.grip.hide()
-        self._fade_timer = QtCore.QTimer(self, interval=250, timeout=self.update)
+        # Single-shot, re-armed after each paint: 16 ms while fading, otherwise just when the next fade starts.
+        self._anim = QtCore.QTimer(self, singleShot=True, timeout=self.update)
         ov = settings.section("overlay")
         self.setGeometry(ov["x"], ov["y"], ov["w"], ov["h"])
         self._ensure_on_screen()
@@ -56,10 +78,8 @@ class OverlayWindow(QtWidgets.QWidget):
         ov = self.settings.section("overlay")
         self.cfg = ov
         self.font = QtGui.QFont(ov.get("font_family") or "Malgun Gothic", int(ov["font_size"]), QtGui.QFont.Weight.Bold)
-        if ov.get("fade_sec", 0) > 0:
-            self._fade_timer.start()
-        else:
-            self._fade_timer.stop()
+        if not ov.get("fade_sec", 0):
+            self._anim.stop()
         self.update()
 
     def _set(self, key, value):
@@ -179,23 +199,33 @@ class OverlayWindow(QtWidgets.QWidget):
         super().resizeEvent(event)
 
     # ---------- painting ----------
-    def _visible_entries(self):
-        now = time.monotonic()
-        fade = float(self.cfg.get("fade_sec", 0) or 0)
+    def _visible_entries(self, now=None):
+        now = time.monotonic() if now is None else now
+        fade = 0.0 if self.edit_mode else float(self.cfg.get("fade_sec", 0) or 0)
         items = list(self.entries.values())
         end = len(items) - self.scroll
         items = items[max(0, end - int(self.cfg["max_lines"])):end]
         out = []
         for e in items:
-            alpha = 1.0
-            if fade > 0 and not self.edit_mode:
-                age = now - e.time
-                if age > fade + FADE_OUT_SEC:
-                    continue
-                if age > fade:
-                    alpha = 1.0 - (age - fade) / FADE_OUT_SEC
-            out.append((e, alpha))
+            state = fade_state(now - e.time, fade)
+            if state is not None:
+                out.append((e, *state))
         return out
+
+    def _next_frame_ms(self, now=None):
+        """Delay until the overlay needs repainting again, or None if nothing will change."""
+        fade = float(self.cfg.get("fade_sec", 0) or 0)
+        if fade <= 0 or self.edit_mode or not self.entries:
+            return None
+        now = time.monotonic() if now is None else now
+        wait = None
+        for e in self.entries.values():
+            t = now - e.time - fade
+            if 0 <= t < FADE_OUT_SEC + COLLAPSE_SEC:
+                return FRAME_MS
+            if t < 0:
+                wait = -t if wait is None else min(wait, -t)
+        return None if wait is None else max(FRAME_MS, int(wait * 1000) + 1)
 
     def _blocks(self, e):
         blocks = []
@@ -236,17 +266,21 @@ class OverlayWindow(QtWidgets.QWidget):
         width = max(50, rect.width() - 45)
         flags = QtCore.Qt.TextFlag.TextWordWrap | QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop
         laid = []
-        for e, alpha in self._visible_entries():
+        spacing = int(self.cfg["line_spacing"])
+        for e, alpha, grow in self._visible_entries():
             blocks = [(t, c, fm.boundingRect(QtCore.QRect(0, 0, width, 100000), flags, t).height())
                       for t, c in self._blocks(e)]
-            laid.append((blocks, alpha, sum(h for _, _, h in blocks) + 2 * (len(blocks) - 1)))
-        avail = rect.height() - (40 if self.edit_mode else 16)
-        spacing = int(self.cfg["line_spacing"])
-        while len(laid) > 1 and sum(h for _, _, h in laid) + spacing * (len(laid) - 1) > avail:
+            full = sum(h + 2 for _, _, h in blocks) + spacing  # same as what the drawing loop advances
+            laid.append((blocks, alpha, full * grow))
+        avail = rect.height() - (40 if self.edit_mode else 16) + spacing
+        while len(laid) > 1 and sum(h for _, _, h in laid) > avail:
             laid.pop(0)  # drop the oldest line that doesn't fit
 
         y = 8
-        for blocks, alpha, _ in laid:
+        for blocks, alpha, space in laid:
+            if alpha <= 0:  # collapsing: only its (shrinking) space remains
+                y += round(space)
+                continue
             for text, color, h in blocks:
                 shadow = QtGui.QColor(0, 0, 0, int(200 * alpha))
                 for dx, dy in ((2, 2), (1, 1), (-1, 1)):
@@ -258,3 +292,9 @@ class OverlayWindow(QtWidgets.QWidget):
                 p.drawText(QtCore.QRect(15, y, width, h), flags, text)
                 y += h + 2
             y += spacing
+        p.end()
+        delay = self._next_frame_ms()
+        if delay is None:
+            self._anim.stop()
+        else:
+            self._anim.start(delay)

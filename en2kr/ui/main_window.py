@@ -399,8 +399,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.voice_btn.setVisible(mode == "voicechat")
         self.source_hint.setText({
             "voicechat": "게임 효과음은 빼고 음성 채팅만 번역합니다",
-            "device": "선택한 입력 장치의 소리를 번역합니다",
-        }.get(mode, "그 프로그램의 소리만 번역합니다 (VB-CABLE 불필요)"))
+            "device": "선택된 입력 장치만 번역합니다",
+        }.get(mode, "선택된 프로그램만 번역합니다"))
 
     def _source_chosen(self, index):
         kind, value = self.source.itemData(index) or (None, None)
