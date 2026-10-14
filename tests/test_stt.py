@@ -80,3 +80,25 @@ def test_fixed_english_mode_ignores_detection(auto_engine):
         assert r.language == "en" and "friendly" in r.text.lower()
     finally:
         auto_engine.update_options({**auto_engine.cfg, "mode": "auto"})
+
+
+@pytest.fixture(scope="module")
+def english_engine():
+    if not (stt.is_downloaded("distil-large-v3.5") and stt.is_downloaded("tiny")):
+        pytest.skip("models not downloaded")
+    eng = stt.SttEngine()
+    eng.load({"model": "distil-large-v3.5", "mode": "english", "device": "auto", "skip_korean": True})
+    assert eng.gate is not None
+    return eng
+
+
+def test_english_only_skips_korean_instead_of_translating_it(english_engine):
+    """English-only models turn Korean speech into English text; the detector must drop it."""
+    r = english_engine.transcribe(_wav("speech_ko.wav"))
+    assert r.skipped == "korean" and r.text == ""
+
+
+def test_english_only_keeps_english_and_accented_english(english_engine):
+    assert "friendly" in english_engine.transcribe(_wav("speech_en.wav")).text.lower()
+    r = english_engine.transcribe(_wav("speech_en_accented.wav"))
+    assert r.skipped is None and "together" in r.text.lower()

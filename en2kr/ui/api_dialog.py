@@ -61,7 +61,7 @@ class ApiDialog(QtWidgets.QDialog):
         body.addWidget(self.stack, 1)
         layout.addLayout(body, 1)
 
-        self.slang = QtWidgets.QCheckBox("영어 슬랭 풀어쓰기 사용 (gg → good game 등, 오른쪽 '슬랭' 탭에서 편집)")
+        self.slang = QtWidgets.QCheckBox("게임 은어 풀어쓰기 사용 (nade → grenade 등, 메인 창 '슬랭' 탭에서 편집)")
         self.slang.setChecked(tr.get("use_slang", True))
         layout.addWidget(self.slang)
         btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Save

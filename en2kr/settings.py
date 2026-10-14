@@ -53,8 +53,13 @@ DEFAULT_HALLUCINATIONS = [
     "That's wrong.", "Oh my God, I don't know.",
 ]
 
-# English -> English expansions applied before machine translation.
-DEFAULT_SLANG = {
+# English -> English expansions applied before machine translation. Only words
+# people actually *say* belong here: the input is transcribed speech, so
+# text-chat abbreviations (brb, idk, ...) never show up.
+DEFAULT_SLANG = {"nade": "grenade", "nades": "grenades", "rez": "revive"}
+
+# v2.0 shipped text-chat abbreviations; replaced if the user never edited them.
+_OLD_DEFAULT_SLANG = {
     "gg": "good game", "wp": "well played", "nade": "grenade", "nades": "grenades",
     "rez": "revive", "brb": "be right back", "omw": "on my way", "idk": "I don't know",
     "nvm": "never mind", "tbh": "to be honest", "imo": "in my opinion",
@@ -79,7 +84,7 @@ DEFAULTS = {
             "max_utterance_sec": 12.0, "min_speech_sec": 0.25},
     "stt": {"mode": "english", "model": "auto", "language": "en",
             "auto_languages": ["en", "ko", "de", "fr", "es", "ru", "pl"],
-            "skip_korean": True, "int8": False, "device": "auto", "beam_size": 5,
+            "skip_korean": True, "device": "auto", "beam_size": 5,
             "use_context": True},
     "translate": {
         "order": [],
@@ -101,7 +106,7 @@ DEFAULTS = {
                 "fade_sec": 0, "bg_opacity": 0},
     "hotkeys": {"edit_mode": "f12"},
     "logging": {"save_transcripts": True, "retention_days": 14},
-    "ui": {"cpu_warning_dismissed": False, "onboarding_done": False, "int8_unsupported": False},
+    "ui": {"cpu_warning_dismissed": False, "onboarding_done": False},
 }
 
 # Collections the user edits as a whole: a saved value replaces the default.
@@ -172,6 +177,8 @@ class Settings:
                     if not isinstance(saved, dict):
                         raise ValueError("top-level JSON is not an object")
                     self._data = _map_secrets(_merge(DEFAULTS, saved), secret_store.decrypt)
+                    if self._data.get("slang") == _OLD_DEFAULT_SLANG:
+                        self._data["slang"] = dict(DEFAULT_SLANG)
                     return self
                 except (OSError, ValueError) as e:
                     backup = f"{self.path}.corrupt-{time.strftime('%Y%m%d-%H%M%S')}"

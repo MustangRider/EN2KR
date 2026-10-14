@@ -19,7 +19,7 @@ MODELS = [
     "distil-small.en", "small.en", "distil-large-v3.5",
     "small", "medium", "large-v3-turbo", "large-v3",
 ]
-COMPUTE_TYPES = ["float16", "int8_float16"]
+COMPUTE_TYPES = ["float16"]
 
 
 def add_cuda_dll_dirs():

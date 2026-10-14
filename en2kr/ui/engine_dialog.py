@@ -29,7 +29,7 @@ def _speed_label(rtf):
 
 
 class EngineDialog(QtWidgets.QDialog):
-    def __init__(self, stt_cfg, int8_unsupported=False, cuda=False, parent=None):
+    def __init__(self, stt_cfg, cuda=False, parent=None):
         super().__init__(parent)
         self.setWindowTitle("음성 인식 엔진 설정")
         self.resize(860, 640)
@@ -72,11 +72,15 @@ class EngineDialog(QtWidgets.QDialog):
                              else QtCore.Qt.CheckState.Unchecked)
             self.auto_list.addItem(it)
         al.addWidget(self.auto_list, 1)
-        self.skip_ko = QtWidgets.QCheckBox("한국어 음성은 건너뛰기 (한국인 파티원 제외)")
+        self.skip_ko = QtWidgets.QCheckBox("한국어 음성은 번역하지 않고 건너뛰기 (한국인 파티원·한국어 방송 등)")
         self.skip_ko.setChecked(self.cfg.get("skip_korean", True))
         l1.addWidget(QtWidgets.QLabel("자동 감지 허용 언어:"), 4, 0)
         l1.addWidget(self.auto_box, 4, 1)
-        l1.addWidget(self.skip_ko, 5, 1)
+        l1.addWidget(self.skip_ko, 5, 0, 1, 2)
+        self.skip_note = QtWidgets.QLabel()
+        self.skip_note.setObjectName("muted")
+        self.skip_note.setWordWrap(True)
+        l1.addWidget(self.skip_note, 6, 0, 1, 2)
         l1.setColumnStretch(1, 1)
         layout.addWidget(g1)
 
@@ -110,13 +114,6 @@ class EngineDialog(QtWidgets.QDialog):
         self.device_combo.setCurrentIndex(1 if self.cfg.get("device") == "cpu" else 0)
         opts.addWidget(QtWidgets.QLabel("실행 장치:"))
         opts.addWidget(self.device_combo)
-        self.int8 = QtWidgets.QCheckBox("VRAM 절약 모드 (int8, 정확도 소폭 하락)")
-        self.int8.setChecked(bool(self.cfg.get("int8")) and not int8_unsupported)
-        if int8_unsupported or not cuda:
-            self.int8.setEnabled(False)
-            self.int8.setToolTip("이 GPU에서는 int8 연산이 지원되지 않습니다." if int8_unsupported
-                                 else "GPU가 없을 때는 사용할 수 없습니다.")
-        opts.addWidget(self.int8)
         opts.addStretch()
         l2.addLayout(opts)
         layout.addWidget(g2, 1)
@@ -148,7 +145,11 @@ class EngineDialog(QtWidgets.QDialog):
         mode = self.mode()
         self.lang_combo.setEnabled(mode != "english")
         self.auto_box.setEnabled(mode == "auto")
-        self.skip_ko.setEnabled(mode == "auto")
+        self.skip_note.setText(
+            "영어 전용 엔진은 언어를 구분하지 못해 한국어를 영어로 바꿔 받아 적습니다. 이 옵션을 켜면 "
+            "언어 판별용 작은 모델(tiny)을 함께 써서 한국어를 걸러냅니다 (VRAM 약 360MB 추가)."
+            if mode == "english" else
+            "Whisper가 판별한 한국어 확률이 높을 때만 건너뜁니다. 억양이 강한 영어는 최대한 살려 둡니다.")
         kind = "english" if mode == "english" else "multilingual"
         current = self.selected_model() or stt.resolve_model_id(self.cfg, self.cuda)
         self.table.setRowCount(0)
@@ -205,9 +206,9 @@ class EngineDialog(QtWidgets.QDialog):
         cfg["skip_korean"] = self.skip_ko.isChecked()
         cfg["model"] = self.selected_model() or cfg.get("model", "auto")
         cfg["device"] = self.device_combo.currentData()
-        cfg["int8"] = self.int8.isEnabled() and self.int8.isChecked()
         return cfg
 
     @staticmethod
     def needs_reload(old, new):
-        return any(old.get(k) != new.get(k) for k in ("model", "device", "int8"))
+        # skip_korean decides whether the Korean detector model is loaded next to an English-only model
+        return any(old.get(k) != new.get(k) for k in ("model", "device", "skip_korean"))

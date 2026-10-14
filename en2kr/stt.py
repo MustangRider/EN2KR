@@ -182,12 +182,22 @@ class SttEngine:
     MIN_AVG_LOGPROB = -1.0
     KOREAN_SKIP_MIN = 0.85   # raw Whisper probability needed before discarding speech as Korean
 
+    # English-only models cannot tell languages apart: fed Korean, they *translate*
+    # it into English. A tiny multilingual model is used only as a Korean detector.
+    # Tiny also scores strongly Korean-accented English as Korean (0.89 on our
+    # sample), so a mid score only skips when the English transcript is unsure too
+    # (Korean speech: avg_logprob -0.35..-0.70, accented English: -0.17).
+    GATE_MODEL = "tiny"
+    GATE_SURE = 0.98
+    GATE_LIKELY = 0.6
+    GATE_EN_LOGPROB = -0.3
+
     def __init__(self):
         self.model = None
+        self.gate = None
         self.model_id = None
         self.device = None
         self.compute_type = None
-        self.int8_unsupported = False
         self.cfg = {}
         self._lock = threading.Lock()
 
@@ -198,7 +208,8 @@ class SttEngine:
     def describe(self):
         if not self.model:
             return "로드 안 됨"
-        return f"{self.model_id} · {self.device.upper()} · {self.compute_type}"
+        extra = " · 한국어 판별" if self.gate is not None else ""
+        return f"{self.model_id} · {self.device.upper()} · {self.compute_type}{extra}"
 
     def load(self, cfg, progress=None):
         """Load per cfg (the 'stt' settings section). Returns a list of warnings."""
@@ -208,31 +219,35 @@ class SttEngine:
         cuda = cfg.get("device", "auto") != "cpu" and gpu.cuda_device_count() > 0
         model_id = resolve_model_id(cfg, cuda)
         path = download(model_id, progress)
-        attempts = []
-        if cuda:
-            if cfg.get("int8"):
-                attempts.append(("cuda", "int8_float16"))
-            attempts.append(("cuda", "float16"))
-        attempts.append(("cpu", "int8"))
+        attempts = ([("cuda", "float16")] if cuda else []) + [("cpu", "int8")]
 
         last_error = None
         for device, compute in attempts:
             try:
                 model = WhisperModel(path, device=device, compute_type=compute,
                                      cpu_threads=min(4, os.cpu_count() or 4))
-                # Some failures (e.g. int8 GEMM on new GPUs) only surface on first use.
+                # Some GPU failures only surface on first use.
                 list(model.transcribe(np.zeros(16000, np.float32), language="en", beam_size=1)[0])
             except Exception as e:
                 last_error = e
                 log.warning("Loading %s on %s/%s failed: %s", model_id, device, compute, e)
-                if compute.startswith("int8") and device == "cuda":
-                    self.int8_unsupported = True
-                    warnings.append("이 GPU는 VRAM 절약 모드(int8)를 지원하지 않아 float16으로 실행합니다.")
-                elif device == "cuda":
+                if device == "cuda":
                     warnings.append(f"GPU로 모델을 불러오지 못해 CPU로 실행합니다. ({e})")
                 continue
+            gate = None
+            info = _BY_ID.get(model_id)
+            if info and info.kind == "english" and cfg.get("skip_korean", True):
+                try:
+                    gate = WhisperModel(download(self.GATE_MODEL, progress), device=device, compute_type=compute,
+                                        cpu_threads=2)
+                    gate.detect_language(np.zeros(16000, np.float32))
+                except Exception as e:
+                    log.warning("Korean detector unavailable: %s", e)
+                    warnings.append(f"한국어 판별 모델을 불러오지 못해 한국어 음성 건너뛰기가 꺼집니다. ({e})")
+                    gate = None
             with self._lock:
-                self.model, self.model_id, self.device, self.compute_type = model, model_id, device, compute
+                self.model, self.gate = model, gate
+                self.model_id, self.device, self.compute_type = model_id, device, compute
                 self.cfg = dict(cfg)
             log.info("STT ready: %s", self.describe())
             return warnings
@@ -243,9 +258,15 @@ class SttEngine:
         with self._lock:
             self.cfg = dict(cfg)
 
+    def _skipped(self, result, ko, t0):
+        result.language, result.language_conf, result.skipped = "ko", ko, "korean"
+        result.text = ""
+        result.latency = time.perf_counter() - t0
+        return result
+
     def transcribe(self, audio, prev_text=None):
         with self._lock:
-            model, cfg, model_id = self.model, dict(self.cfg), self.model_id
+            model, gate, cfg, model_id = self.model, self.gate, dict(self.cfg), self.model_id
         if model is None:
             raise RuntimeError("STT model not loaded")
         t0 = time.perf_counter()
@@ -254,6 +275,7 @@ class SttEngine:
         mode = cfg.get("mode", "english")
         if info_kind == "english":
             mode = "english"
+        skip_korean = cfg.get("skip_korean", True)
         lang = "en" if mode == "english" else cfg.get("language", "en")
         opts = dict(beam_size=int(cfg.get("beam_size", 5)), condition_on_previous_text=False,
                     without_timestamps=True, vad_filter=False)
@@ -262,37 +284,51 @@ class SttEngine:
             opts["initial_prompt"] = prev_text[-200:]
 
         result = SttResult(audio_sec=len(audio) / 16000, language=lang)
-        if mode == "auto":
+        gate_ko = None
+        if mode == "english":
+            if gate is not None and skip_korean:
+                _, _, probs = gate.detect_language(audio)
+                gate_ko = dict(probs or []).get("ko", 0.0)
+                if gate_ko >= self.GATE_SURE:
+                    return self._skipped(result, gate_ko, t0)
+            segments, info = model.transcribe(audio, language="en", **opts)
+        elif mode == "auto" or skip_korean:
+            # Let Whisper detect the language first (fixed mode needs it only to spot Korean).
             segments, info = model.transcribe(audio, language=None, **opts)
-            allowed = cfg.get("auto_languages", ["en"])
-            fallback = cfg.get("language", "en")
-            lang, conf = choose_language(info.all_language_probs, allowed, fallback=fallback)
-            if lang == "ko" and cfg.get("skip_korean", True):
-                raw_ko = dict(info.all_language_probs or []).get("ko", 0.0)
-                if raw_ko >= self.KOREAN_SKIP_MIN:
-                    result.language, result.language_conf, result.skipped = "ko", raw_ko, "korean"
-                    result.latency = time.perf_counter() - t0
-                    return result
-                # Korean-accented English is often scored as "ko": don't drop it, pick the next language.
-                lang, conf = choose_language(info.all_language_probs, [l for l in allowed if l != "ko"],
-                                             fallback=fallback if fallback != "ko" else "en", min_confidence=0.0)
-            result.language, result.language_conf = lang, conf
+            probs = info.all_language_probs or []
+            raw_ko = dict(probs).get("ko", 0.0)
+            if mode == "auto":
+                allowed = cfg.get("auto_languages", ["en"])
+                fallback = cfg.get("language", "en")
+                lang, conf = choose_language(probs, allowed, fallback=fallback)
+                if lang == "ko" and skip_korean and raw_ko < self.KOREAN_SKIP_MIN:
+                    # Korean-accented English is often scored as "ko": don't drop it, pick the next language.
+                    lang, conf = choose_language(probs, [x for x in allowed if x != "ko"],
+                                                 fallback=fallback if fallback != "ko" else "en", min_confidence=0.0)
+                result.language_conf = conf
+            if skip_korean and raw_ko >= self.KOREAN_SKIP_MIN:
+                return self._skipped(result, raw_ko, t0)
+            result.language = lang
             if lang != info.language:
                 segments, info = model.transcribe(audio, language=lang, **opts)
         else:
             segments, info = model.transcribe(audio, language=lang, **opts)
 
-        texts, logprobs, nospeech = [], [], []
+        texts, logprobs, nospeech, all_logprobs = [], [], [], []
         for s in segments:
             txt = s.text.strip()
             if not txt:
                 continue
+            all_logprobs.append(s.avg_logprob)
             if s.no_speech_prob < self.MAX_NO_SPEECH and s.avg_logprob > self.MIN_AVG_LOGPROB:
                 texts.append(txt)
                 logprobs.append(s.avg_logprob)
                 nospeech.append(s.no_speech_prob)
             else:
                 result.rejected.append(txt)
+        if (gate_ko is not None and gate_ko >= self.GATE_LIKELY and all_logprobs
+                and float(np.mean(all_logprobs)) < self.GATE_EN_LOGPROB):
+            return self._skipped(result, gate_ko, t0)
         result.text = " ".join(texts).strip()
         if opts.get("initial_prompt") and result.text and result.text.lower() in opts["initial_prompt"].lower():
             result.rejected.append(result.text)  # prompt echoed back on unclear audio

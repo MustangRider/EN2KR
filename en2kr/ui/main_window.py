@@ -232,7 +232,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.slang = TermEditor(self.settings, "slang", ["슬랭", "풀어쓴 영어"], ("예: gg", "예: good game"))
         tabs.addTab(self._wrap(self.glossary, "게임 고유명사를 항상 지정한 한국어로 번역합니다. 대소문자·복수형(s)은 자동 처리됩니다."),
                     "고유명사")
-        tabs.addTab(self._wrap(self.slang, "번역 전에 영어 슬랭을 풀어 써서 오역을 줄입니다."), "슬랭")
+        tabs.addTab(self._wrap(self.slang, "말로 하는 게임 은어(예: nade → grenade)를 번역 전에 풀어 써서 오역을 줄입니다."),
+                    "슬랭")
         tabs.addTab(self._build_hallucination_tab(), "환청 차단")
         split.addWidget(tabs)
         split.setSizes([700, 460])
@@ -445,11 +446,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_chip(comp, state, msg)
         if comp == "stt" and state in ("ok", "error"):
             self.dl_bar.hide()
-        if (comp == "stt" and state == "ok" and self.pipeline.engine.int8_unsupported
-                and not self.settings.get("ui.int8_unsupported")):
-            self.settings.set("ui.int8_unsupported", True)
-            self.settings.set("stt.int8", False)
-            self.settings.save()
         if state == "error":
             self._log_html(f"<span style='color:#f85149'>[{comp}] {html.escape(msg)}</span>")
 
@@ -580,8 +576,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # ================= dialogs =================
     def open_engine(self):
         old = self.settings.section("stt")
-        int8_bad = self.pipeline.engine.int8_unsupported or bool(self.settings.get("ui.int8_unsupported"))
-        dlg = EngineDialog(old, int8_bad, self.cuda, self)
+        dlg = EngineDialog(old, self.cuda, self)
         if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         new = dlg.result_cfg()

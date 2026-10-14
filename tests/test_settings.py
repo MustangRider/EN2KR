@@ -87,3 +87,12 @@ def test_v1_migration(tmp_path, isolated_home):
     assert s.get("ui.cpu_warning_dismissed") is True
     assert s.get("hallucinations") == ["Oh"]
     assert p.exists()
+
+
+def test_old_text_chat_slang_defaults_are_replaced(tmp_path):
+    from en2kr.settings import _OLD_DEFAULT_SLANG, DEFAULT_SLANG
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"slang": _OLD_DEFAULT_SLANG}), encoding="utf-8")
+    assert Settings(str(p)).load().get("slang") == DEFAULT_SLANG
+    p.write_text(json.dumps({"slang": {"gg": "good game", "flank": "go around"}}), encoding="utf-8")
+    assert Settings(str(p)).load().get("slang") == {"gg": "good game", "flank": "go around"}  # user-edited: kept
