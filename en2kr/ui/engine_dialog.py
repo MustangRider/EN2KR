@@ -147,7 +147,7 @@ class EngineDialog(QtWidgets.QDialog):
         self.auto_box.setEnabled(mode == "auto")
         self.skip_note.setText(
             "영어 전용 엔진은 언어를 구분하지 못해 한국어를 영어로 바꿔 받아 적습니다. 이 옵션을 켜면 "
-            "언어 판별용 작은 모델(tiny)을 함께 써서 한국어를 걸러냅니다 (VRAM 약 360MB 추가)."
+            "언어 판별용 작은 모델(tiny)을 함께 써서 한국어를 걸러냅니다 (VRAM 약 100MB 추가)."
             if mode == "english" else
             "Whisper가 판별한 한국어 확률이 높을 때만 건너뜁니다. 억양이 강한 영어는 최대한 살려 둡니다.")
         kind = "english" if mode == "english" else "multilingual"

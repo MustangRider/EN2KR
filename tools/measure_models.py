@@ -8,7 +8,6 @@ Usage:
     python tools/measure_models.py path/to/speech.wav [--out en2kr/model_stats.json]
 """
 import argparse
-import glob
 import json
 import os
 import subprocess
@@ -23,9 +22,10 @@ COMPUTE_TYPES = ["float16"]
 
 
 def add_cuda_dll_dirs():
-    for d in glob.glob(os.path.join(sys.prefix, "Lib", "site-packages", "nvidia", "*", "bin")):
-        os.add_dll_directory(d)
-        os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
+    # Same CUDA libraries as the app (bundled cuBLAS/cuDNN, installed Toolkit ignored).
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from en2kr import gpu
+    gpu.setup_cuda_dll_paths()
 
 
 def gpu_used_mb():

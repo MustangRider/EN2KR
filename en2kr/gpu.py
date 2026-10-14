@@ -16,6 +16,23 @@ from . import paths
 
 log = logging.getLogger(__name__)
 _dll_dirs_added = False
+_preloaded = []  # keep handles alive
+
+# Loaded by full path before ctranslate2 starts, so a later load by name reuses them.
+_PRELOAD = ("cublasLt64_12.dll", "cublas64_12.dll")
+
+
+def _ignore_cuda_toolkit():
+    """Hide an installed CUDA Toolkit from this process.
+
+    With CUDA_PATH set, the CUDA libraries were taken from the Toolkit instead of
+    the bundled ones. On the RTX 5060 test PC that meant cuBLAS 12.1 (older than
+    the GPU) at 0.64 s per 9.9 s clip vs 0.26 s with the bundled cuBLAS 12.9.
+    """
+    for key in [k for k in os.environ if k.upper().startswith("CUDA_PATH")]:
+        os.environ.pop(key, None)
+    parts = os.environ.get("PATH", "").split(os.pathsep)
+    os.environ["PATH"] = os.pathsep.join(p for p in parts if "nvidia gpu computing toolkit" not in p.lower())
 
 
 def setup_cuda_dll_paths():
@@ -29,20 +46,45 @@ def setup_cuda_dll_paths():
     except AttributeError:  # pragma: no cover
         pass
     roots.append(os.path.join(sys.prefix, "Lib", "site-packages"))
-    seen = set()
+    dirs, seen = [], set()
     for root in roots:
         for d in glob.glob(os.path.join(root, "nvidia", "*", "bin")):
             key = os.path.normcase(os.path.abspath(d))
-            if key in seen:
-                continue
-            seen.add(key)
-            try:
-                os.add_dll_directory(d)
-            except OSError:
-                continue
-            # ctranslate2 loads cuDNN lazily with plain LoadLibrary, which only honours PATH.
-            os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
-            log.debug("CUDA DLL dir: %s", d)
+            if key not in seen:
+                seen.add(key)
+                dirs.append(d)
+    if not dirs:
+        return  # no bundled CUDA libraries: leave the system setup alone
+    _ignore_cuda_toolkit()
+    for d in dirs:
+        try:
+            os.add_dll_directory(d)
+        except OSError:
+            continue
+        # ctranslate2 loads cuDNN lazily with plain LoadLibrary, which only honours PATH.
+        os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
+        log.debug("CUDA DLL dir: %s", d)
+    for name in _PRELOAD:
+        for d in dirs:
+            full = os.path.join(d, name)
+            if os.path.exists(full):
+                try:
+                    _preloaded.append(ctypes.WinDLL(full))
+                except OSError as e:
+                    log.warning("Could not preload %s: %s", full, e)
+                break
+
+
+def loaded_library_path(name):
+    """Full path of an already-loaded DLL (diagnostics), or ''."""
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetModuleHandleW.restype = ctypes.c_void_p
+    handle = k32.GetModuleHandleW(name)
+    if not handle:
+        return ""
+    buf = ctypes.create_unicode_buffer(1024)
+    k32.GetModuleFileNameW(ctypes.c_void_p(handle), buf, 1024)
+    return buf.value
 
 
 def cuda_device_count():
