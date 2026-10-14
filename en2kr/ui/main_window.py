@@ -16,6 +16,7 @@ from .hotkeys import Hotkeys
 from .onboarding import OnboardingDialog
 from .overlay import OverlayWindow
 from .settings_dialog import SettingsDialog
+from .voicechat_dialog import VoiceChatDialog
 from .theme import STATE_COLORS
 
 log = logging.getLogger(__name__)
@@ -165,9 +166,12 @@ class MainWindow(QtWidgets.QMainWindow):
         refresh = QtWidgets.QPushButton("새로고침")
         refresh.clicked.connect(self._populate_sources)
         src.addWidget(refresh)
-        hint = QtWidgets.QLabel("그 프로그램의 소리만 번역합니다 (VB-Cable 불필요)")
-        hint.setObjectName("muted")
-        src.addWidget(hint)
+        self.voice_btn = QtWidgets.QPushButton("보이스챗 설정")
+        self.voice_btn.clicked.connect(self.open_voicechat)
+        src.addWidget(self.voice_btn)
+        self.source_hint = QtWidgets.QLabel()
+        self.source_hint.setObjectName("muted")
+        src.addWidget(self.source_hint)
         src.addStretch()
         root.addLayout(src)
 
@@ -363,6 +367,8 @@ class MainWindow(QtWidgets.QMainWindow):
             apps = sessions.list_audio_apps()
         except Exception as e:
             log.warning("listing audio apps failed: %s", e)
+        self.source.addItem("ARC Raiders 보이스챗만 번역 (VB-CABLE)", ("voicechat", None))
+        self.source.insertSeparator(self.source.count())
         seen = set()
         saved = audio.get("process_name") or ""
         for a in apps:
@@ -373,21 +379,31 @@ class MainWindow(QtWidgets.QMainWindow):
             self.source.addItem(a.label + playing, ("process", a.name))
         if saved and saved.lower() not in seen:
             label = sessions.AudioApp(0, saved, False, 0).label
-            self.source.insertItem(0, f"{label}  (실행 대기)", ("process", saved))
+            self.source.insertItem(2, f"{label}  (실행 대기)", ("process", saved))
         self.source.insertSeparator(self.source.count())
         if audio.get("mode") == "device" and audio.get("device_name"):
             self.source.addItem(f"입력 장치: {audio['device_name']}", ("device", audio["device_name"]))
         self.source.addItem("입력 장치 직접 선택 (VB-Cable 등, 고급)…", ("device_pick", None))
-        want = ("device", audio.get("device_name")) if audio.get("mode") == "device" else ("process", saved)
+        mode = audio.get("mode")
+        want = {"device": ("device", audio.get("device_name")), "voicechat": ("voicechat", None)}.get(
+            mode, ("process", saved))
         for i in range(self.source.count()):
             d = self.source.itemData(i)
             if d and d[0] == want[0] and (d[1] or "").lower() == (want[1] or "").lower():
                 self.source.setCurrentIndex(i)
                 break
         self.source.blockSignals(False)
+        self.voice_btn.setVisible(mode == "voicechat")
+        self.source_hint.setText({
+            "voicechat": "게임 효과음은 빼고 음성 채팅만 번역합니다",
+            "device": "선택한 입력 장치의 소리를 번역합니다",
+        }.get(mode, "그 프로그램의 소리만 번역합니다 (VB-CABLE 불필요)"))
 
     def _source_chosen(self, index):
         kind, value = self.source.itemData(index) or (None, None)
+        if kind == "voicechat":
+            self.open_voicechat()
+            return
         if kind == "process":
             self.settings.set("audio.mode", "process")
             self.settings.set("audio.process_name", value)
@@ -597,6 +613,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if new_key != old_key:
             self.hotkeys.set_edit_key(new_key)
             self.edit_tip.setText(f"{new_key.upper()}: 오버레이 편집 모드")
+
+    def open_voicechat(self):
+        dlg = VoiceChatDialog(self.settings, self)
+        if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            dlg.apply()
+            self.pipeline.restart_source()
+        self._populate_sources()
 
     def open_onboarding(self):
         dlg = OnboardingDialog(self)

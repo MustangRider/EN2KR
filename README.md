@@ -7,6 +7,8 @@ Whisper로 받아 적고, 번역 API로 한국어로 옮겨 게임 화면 위에
 
 - **VB-Cable 불필요**: Windows 프로세스 루프백 캡처로 선택한 프로그램의 소리만 직접 받습니다.
   게임 소리는 평소처럼 헤드셋으로 들립니다. (OBS '애플리케이션 오디오 캡처'와 같은 방식, 게임 프로세스는 건드리지 않음)
+- **ARC Raiders 보이스챗만 번역 (선택)**: 게임의 '음성 채팅 출력 장치'를 VB-CABLE로 보내면 총소리·효과음 없이
+  음성 채팅만 번역하고, 보이스챗은 앱이 헤드셋으로 다시 들려줍니다. VB-CABLE이 없으면 앱이 공식 설치 프로그램을 받아 실행해 줍니다.
 - **프로그램 안에서 바로 설정**: 메인 창의 '번역할 프로그램'에서 소리를 내는 앱을 고르면 끝. ARC Raiders(`PioneerGame.exe`)는 기본값이고, 게임을 재시작하면 자동으로 다시 연결됩니다.
 - **인식 엔진 선택**: 영어 전용 / 다국어·언어 고정 / 다국어·자동 감지(한국어 음성 건너뛰기) 중에서 고르고, 모델 크기를 **실측 VRAM·속도와 현재 GPU 여유 VRAM**을 보며 정합니다.
 - **번역 API 여러 개 + 자동 전환**: DeepL, Azure, Google Cloud Translation, OpenAI 호환 LLM(Gemini·Groq·OpenRouter·Ollama). 한도 초과·오류 시 다음 API로 넘어갑니다.
@@ -19,6 +21,7 @@ Whisper로 받아 적고, 번역 API로 한국어로 옮겨 게임 화면 위에
 - Windows 10 22H2 / Windows 11 (프로세스 오디오 캡처 사용, Windows 10 19045에서 확인)
 - NVIDIA GPU 권장 (그래픽 드라이버만 있으면 됨, CUDA Toolkit 불필요). GPU가 없으면 CPU로 동작하지만 느립니다.
 - 번역 API 키 1개 이상
+- (보이스챗만 번역 모드) VB-CABLE
 
 | 번역 API | 무료 한도 | 비고 |
 |---|---|---|
@@ -36,6 +39,19 @@ Whisper로 받아 적고, 번역 API로 한국어로 옮겨 게임 화면 위에
 3. 필요하면 '인식 엔진'에서 종류·크기 선택
 4. **F12**로 오버레이 편집 모드: 드래그로 이동, 오른쪽 아래 모서리로 크기 조절, `=`/`-` 글자 크기, Ctrl+휠 줄 수, Shift+휠 줄 간격
 5. 게임은 '테두리 없는 창 모드(Borderless)'로 실행하세요. 독점 전체 화면에서는 오버레이가 보이지 않습니다.
+
+### 보이스챗만 번역 (VB-CABLE)
+
+게임 소리 전체 대신 음성 채팅만 번역하는 모드입니다.
+
+1. '번역할 프로그램' 맨 위의 **ARC Raiders 보이스챗만 번역 (VB-CABLE)** 선택
+2. VB-CABLE이 없으면 'VB-CABLE 설치' → VB-Audio 설치 창에서 Install Driver → 재부팅
+   (VB-CABLE은 VB-Audio의 도네이션웨어입니다. 출처: www.vb-cable.com)
+3. 게임: 설정 → 오디오 → 음성 채팅 → **음성 채팅 출력 장치 = CABLE Input (VB-Audio Virtual Cable)**
+4. '보이스챗 듣기'를 켜 두면 앱이 보이스챗을 헤드셋으로 들려줍니다. 앱을 쓰지 않을 때는 게임 설정을 '시스템 기본값'으로 되돌리세요.
+
+VB-CABLE 패키지는 앱에 포함하지 않습니다(패키지 라이선스상 다른 설치 과정에 통합하려면 작성자 동의 필요).
+설치 버튼은 공식 사이트에서 받아 VB-Audio의 설치 프로그램을 여는 역할만 합니다.
 
 설정·로그·번역 기록은 `%APPDATA%\EN2KR4GAMING`에 저장됩니다. v1의 `settings_en2kr_whisper_context.json`이
 exe 옆에 있으면 처음 실행할 때 자동으로 가져옵니다.
@@ -67,7 +83,7 @@ EN2KR4GAMING.py         실행기
 en2kr/
   app.py                진입점 (Qt, 단일 실행, --selftest)
   settings.py           설정 (BOM 허용, 원자적 저장, DPAPI 키 암호화, v1 이전)
-  audio/                프로세스 루프백 캡처, 오디오 세션 목록, 장치 캡처(고급)
+  audio/                프로세스 루프백 캡처, 오디오 세션 목록, VB-CABLE 보이스챗 캡처·모니터링, 장치 캡처(고급)
   vad.py                Silero VAD(ONNX) + 샘플 기준 발화 분할
   stt.py                faster-whisper 엔진·모델 카탈로그·언어 판별
   translate/            번역 API 어댑터, 용어집/슬랭, 비동기 번역 서비스

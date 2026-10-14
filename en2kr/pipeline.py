@@ -189,7 +189,7 @@ class Pipeline:
             self._source_dirty.set()
 
     def _source_loop(self):
-        from .audio import device, process_loopback, sessions
+        from .audio import device, process_loopback, sessions, voicechat
 
         retry_at = 0.0
         while self._running:
@@ -219,7 +219,13 @@ class Pipeline:
                 retry_at = time.monotonic() + 3600
                 continue
             try:
-                if cfg.get("mode") == "device":
+                if cfg.get("mode") == "voicechat":
+                    v = cfg.get("voice", {})
+                    src = voicechat.VoiceChatCapture(
+                        self._on_audio, self._on_source_end, monitor=v.get("monitor", True),
+                        monitor_device=v.get("monitor_device", ""),
+                        volume=v.get("monitor_volume", 100) / 100).start()
+                elif cfg.get("mode") == "device":
                     key = cfg.get("device_name") or ""
                     if not key:
                         self.events.status("audio", "error", "입력 장치가 선택되지 않았습니다")
