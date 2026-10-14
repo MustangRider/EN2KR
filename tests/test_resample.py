@@ -46,3 +46,13 @@ def test_fifo_prefill_underrun_and_drift_trim():
     assert out[:100].all() and not out[100:].any()
     f.write(np.ones((400, 2)))             # > max_fill -> trimmed back to prefill
     assert f.level == 100
+
+
+def test_vbcable_endpoint_names():
+    from en2kr.audio.vbcable import is_cable_endpoint
+    assert is_cable_endpoint("CABLE Input(VB-Audio Virtual Cable)")
+    assert is_cable_endpoint("스피커(VB-Audio Virtual Cable)")        # name right after install, before reboot
+    assert is_cable_endpoint("CABLE Output(VB-Audio Virtual Cable)")
+    assert not is_cable_endpoint("CABLE In 16 Ch(VB-Audio Virtual Cable)")
+    assert not is_cable_endpoint("CABLE In 16ch(VB-Audio Virtual Cable)")
+    assert not is_cable_endpoint("스피커(D30)")

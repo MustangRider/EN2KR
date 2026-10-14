@@ -9,10 +9,13 @@ from ..audio.endpoints import RENDER, list_endpoints
 from ..audio.voicechat import is_cable_name
 from .bridge import Worker
 
-GAME_STEPS = (
-    f"게임의 오디오 설정에서 <b>음성 채팅 출력 장치</b>를 <b>{vbcable.INPUT_NAME}</b>로 바꾸세요.<br>"
-    "게임 효과음·음악은 지금처럼 헤드셋으로 나오고, 음성 채팅만 이 프로그램으로 들어옵니다."
-)
+def _game_steps():
+    name = vbcable.cable_render_name() or vbcable.INPUT_NAME
+    text = (f"게임의 오디오 설정에서 <b>음성 채팅 출력 장치</b>를 <b>{name}</b>로 바꾸세요.<br>"
+            "게임 효과음·음악은 지금처럼 헤드셋으로 나오고, 음성 채팅만 이 프로그램으로 들어옵니다.")
+    if not name.lower().startswith("cable input"):
+        text += f"<br>(재부팅하면 장치 이름이 '{vbcable.INPUT_NAME}'로 바뀝니다)"
+    return text
 
 
 class VoiceChatDialog(QtWidgets.QDialog):
@@ -60,7 +63,7 @@ class VoiceChatDialog(QtWidgets.QDialog):
         # 2. game setting
         g2 = QtWidgets.QGroupBox("2. 게임 설정 (한 번만)")
         l2 = QtWidgets.QVBoxLayout(g2)
-        steps = QtWidgets.QLabel(GAME_STEPS)
+        self.steps = steps = QtWidgets.QLabel(_game_steps())
         steps.setWordWrap(True)
         l2.addWidget(steps)
         caution = QtWidgets.QLabel("게임에 음성 채팅 출력 장치를 따로 고르는 설정이 있어야 이 방식을 쓸 수 있습니다. "
@@ -109,6 +112,11 @@ class VoiceChatDialog(QtWidgets.QDialog):
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
+        # Size to content so word-wrapped labels (and the warning that comes and goes) never overlap.
+        layout.setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetFixedSize)
+        for lab in self.findChildren(QtWidgets.QLabel):
+            if lab.wordWrap():
+                lab.setMinimumWidth(600)
         self.install_progress.connect(self.status.setText)
         self._refresh_status()
 
@@ -119,16 +127,36 @@ class VoiceChatDialog(QtWidgets.QDialog):
         else:
             self.status.setText("<span style='color:#f85149'>● 설치되어 있지 않음</span>")
             self.install_btn.setText("VB-CABLE 설치")
+        if hasattr(self, "steps"):
+            self.steps.setText(_game_steps())
+        problems = []
         if vbcable.default_output_is_cable():
-            self.warn.setText("Windows 기본 출력 장치가 VB-CABLE로 바뀌어 있습니다. 이대로면 게임 소리가 안 들립니다. "
-                              "Windows 사운드 설정에서 헤드셋을 기본 장치로 되돌리세요.")
+            problems.append(("재생", "Windows 기본 <b>출력 장치</b>가 VB-CABLE로 바뀌어 있습니다. 이대로면 게임 소리가 안 들립니다. "
+                                    "<b>재생</b> 탭에서 헤드셋을 기본 장치로 되돌리세요."))
+        if vbcable.default_input_is_cable():
+            problems.append(("녹음", "Windows 기본 <b>녹음 장치(마이크)</b>가 VB-CABLE로 바뀌어 있습니다. 게임·디스코드 마이크가 "
+                                    "'시스템 기본값'이면 내 목소리가 전달되지 않고, 이 모드에서는 상대 음성 채팅이 다시 게임으로 "
+                                    "들어갈 수 있습니다. <b>녹음</b> 탭에서 원래 마이크를 '기본 장치'와 '기본 통신 장치'로 되돌리세요."))
+        if problems:
+            self.warn.setText("<br><br>".join(text for _, text in problems))
             self.warn.show()
             if not hasattr(self, "_sound_btn"):
-                self._sound_btn = QtWidgets.QPushButton("Windows 사운드 설정 열기")
-                self._sound_btn.clicked.connect(lambda: subprocess.Popen(["control", "mmsys.cpl", "sounds"]))
+                self._sound_btn = QtWidgets.QPushButton()
                 self.warn.parentWidget().layout().addWidget(self._sound_btn)
+            tab = problems[-1][0]
+            self._sound_btn.setText(f"Windows 사운드 설정 열기 ({tab} 탭)")
+            try:
+                self._sound_btn.clicked.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            # mmsys.cpl,,0 = 재생 탭, ,,1 = 녹음 탭
+            self._sound_btn.clicked.connect(
+                lambda: subprocess.Popen(["control", "mmsys.cpl,,1" if tab == "녹음" else "mmsys.cpl,,0"]))
+            self._sound_btn.show()
         else:
             self.warn.hide()
+            if hasattr(self, "_sound_btn"):
+                self._sound_btn.hide()
 
     def _install(self):
         self.install_btn.setEnabled(False)

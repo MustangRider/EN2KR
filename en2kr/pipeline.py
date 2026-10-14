@@ -220,6 +220,10 @@ class Pipeline:
                 continue
             try:
                 if cfg.get("mode") == "voicechat":
+                    from .audio import vbcable
+                    if vbcable.default_input_is_cable():
+                        self.events.notice("Windows 기본 마이크가 VB-CABLE(CABLE Output)입니다. 게임 마이크가 '시스템 기본값'이면 "
+                                           "내 목소리 대신 상대 음성 채팅이 송출될 수 있으니 원래 마이크로 되돌리세요.")
                     v = cfg.get("voice", {})
                     src = voicechat.VoiceChatCapture(
                         self._on_audio, self._on_source_end, monitor=v.get("monitor", True),

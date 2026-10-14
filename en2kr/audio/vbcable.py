@@ -26,19 +26,33 @@ ATTRIBUTION = ("VB-CABLE은 VB-Audio Software(Vincent Burel)의 도네이션웨�
 INPUT_NAME = "CABLE Input (VB-Audio Virtual Cable)"   # what to pick in the game
 
 
-def _is_cable(name, kind):
+def is_cable_endpoint(name):
+    """The main 2-channel VB-CABLE endpoint (not the 16ch one).
+
+    Matched by the device part of the name: right after installation, before
+    a reboot, Windows can show the render side as "스피커(VB-Audio Virtual
+    Cable)" instead of "CABLE Input(...)".
+    """
     n = name.lower()
-    return n.startswith(f"cable {kind}") and "vb-audio virtual cable" in n
+    return "vb-audio virtual cable" in n and "16ch" not in n.replace(" ", "")
+
+
+def cable_render_name():
+    """Current name of the endpoint to pick in the game, or "" if missing."""
+    return next((e.name for e in list_endpoints(RENDER) if is_cable_endpoint(e.name)), "")
 
 
 def is_installed():
-    has_in = any(_is_cable(e.name, "input") for e in list_endpoints(RENDER))
-    has_out = any(_is_cable(e.name, "output") for e in list_endpoints(CAPTURE))
-    return has_in and has_out
+    return bool(cable_render_name()) and any(is_cable_endpoint(e.name) for e in list_endpoints(CAPTURE))
 
 
 def default_output_is_cable():
     return any(e.is_default and "vb-audio virtual cable" in e.name.lower() for e in list_endpoints(RENDER))
+
+
+def default_input_is_cable():
+    """Windows often makes CABLE Output the default microphone when VB-CABLE is installed."""
+    return any(e.is_default and "vb-audio virtual cable" in e.name.lower() for e in list_endpoints(CAPTURE))
 
 
 def download(progress=None):

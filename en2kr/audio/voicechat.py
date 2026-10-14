@@ -72,7 +72,7 @@ class VoiceChatCapture:
         if api is None:
             raise RuntimeError("WASAPI 오디오를 사용할 수 없습니다")
         in_idx, in_dev = _find(sd, api, True,
-                               lambda n: "cable output" in n.lower() and "vb-audio virtual cable" in n.lower())
+                               lambda n: "vb-audio virtual cable" in n.lower() and "16ch" not in n.lower().replace(" ", ""))
         if in_idx is None:
             raise RuntimeError("VB-CABLE(CABLE Output)을 찾을 수 없습니다. '음성 채팅 설정'에서 VB-CABLE을 설치하세요.")
         sr = int(in_dev["default_samplerate"])
