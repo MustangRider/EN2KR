@@ -91,6 +91,15 @@ class Segmenter:
     def in_speech(self):
         return self._in_speech
 
+    @property
+    def position(self):
+        """Absolute stream position (samples) processed so far."""
+        return self._pos
+
+    @property
+    def utterance_start(self):
+        return self._start
+
     def feed(self, chunk):
         if chunk.size == 0:
             return
