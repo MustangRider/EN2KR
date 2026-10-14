@@ -43,6 +43,7 @@ settings_en2kr_whisper_context.json
 * - 복사본.py
 
 # Large/local assets not required to run
+models/whisper_onnx/
 model/
 silero_vad.jit
 en2kr.ico

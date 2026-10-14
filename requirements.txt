@@ -7,3 +7,8 @@ torch
 PySide6
 faster-whisper
 pywin32
+optimum[onnxruntime]
+transformers
+sentencepiece
+tiktoken
+onnxruntime-directml

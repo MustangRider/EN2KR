@@ -23,6 +23,7 @@ if getattr(sys, 'frozen', False):
                 break
 
 import queue, threading, keyboard, json, ctypes, re, time, requests, deepl, base64, subprocess, webbrowser
+from types import SimpleNamespace
 import numpy as np
 import sounddevice as sd
 import torch
@@ -32,10 +33,12 @@ from faster_whisper import WhisperModel
 
 # ================= 1. 전역 설정 및 경로 =================
 BASE_DIR = os.path.dirname(os.path.abspath(sys.argv[0]))
+RESOURCE_DIR = getattr(sys, "_MEIPASS", BASE_DIR)
 
 # VAD 모델 경로 (프로그램 폴더 내부)
-VAD_MODEL_DIR = os.path.join(BASE_DIR, "models", "silero_vad")
-os.makedirs(VAD_MODEL_DIR, exist_ok=True)
+VAD_MODEL_DIR = os.path.join(RESOURCE_DIR, "models", "silero_vad")
+if not getattr(sys, "frozen", False):
+    os.makedirs(VAD_MODEL_DIR, exist_ok=True)
 
 # 한글 경로 에러 방지를 위한 고정 경로 설정 (폴백용)
 VAD_CACHE_DIR = 'C:/temp/en2kr_cache'
@@ -56,6 +59,79 @@ VAD_WINDOW_SIZE = 512
 MAX_DISPLAY_LINES = 5
 MAX_HISTORY_LIMIT = 100
 ALLOW_VAD_DOWNLOAD = os.environ.get("EN2KR_ALLOW_VAD_DOWNLOAD", "0") == "1"
+ONNX_WHISPER_DIR = os.path.join(RESOURCE_DIR, "models", "whisper_onnx")
+
+def _get_directml_device():
+    try:
+        import torch_directml
+        dml_device = torch_directml.device()
+        # 간단한 텐서 이동으로 사용 가능 여부 확인
+        _ = torch.zeros(1).to(dml_device)
+        return dml_device
+    except Exception as e:
+        print(f"[DML] DirectML 사용 불가: {e}")
+        return None
+
+def _has_onnx_directml():
+    try:
+        import onnxruntime as ort
+        providers = ort.get_available_providers()
+        return "DmlExecutionProvider" in providers
+    except Exception as e:
+        print(f"[DML] ONNX Runtime 확인 실패: {e}")
+        return False
+
+def select_compute_backend():
+    """
+    우선순위: CUDA > DirectML > CPU
+    반환: (backend_label, whisper_device, dml_device)
+    """
+    if torch.cuda.is_available():
+        return "cuda", "cuda", None
+
+    dml_device = _get_directml_device()
+    if dml_device is not None or _has_onnx_directml():
+        # faster-whisper는 DirectML 미지원이므로 Whisper는 ONNX로 처리
+        return "directml", "cpu", dml_device
+
+    return "cpu", "cpu", None
+
+def init_whisper_model(backend_label, whisper_device):
+    if backend_label == "directml":
+        try:
+            from optimum.onnxruntime import ORTModelForSpeechSeq2Seq
+            from transformers import WhisperProcessor
+        except Exception as e:
+            print(f"[WHISPER] DirectML ONNX 로더 불러오기 실패: {e}")
+            return None
+
+        if not os.path.isdir(ONNX_WHISPER_DIR):
+            print(f"[WHISPER] ONNX 모델 폴더가 없습니다: {ONNX_WHISPER_DIR}")
+            return None
+
+        class OnnxWhisperWrapper:
+            def __init__(self, model_dir):
+                self.processor = WhisperProcessor.from_pretrained(model_dir)
+                self.model = ORTModelForSpeechSeq2Seq.from_pretrained(
+                    model_dir,
+                    provider="DmlExecutionProvider",
+                )
+
+            def transcribe(self, audio, language="en", beam_size=5, condition_on_previous_text=True):
+                inputs = self.processor(audio, sampling_rate=16000, return_tensors="pt")
+                forced_ids = self.processor.get_decoder_prompt_ids(language=language, task="transcribe")
+                generated_ids = self.model.generate(
+                    **inputs,
+                    num_beams=beam_size,
+                    forced_decoder_ids=forced_ids,
+                )
+                text = self.processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+                segment = SimpleNamespace(text=text, no_speech_prob=0.0, avg_logprob=0.0)
+                return [segment], None
+
+        return OnnxWhisperWrapper(ONNX_WHISPER_DIR)
+
+    return WhisperModel(WHISPER_MODEL_SIZE, device=whisper_device, compute_type="float16" if whisper_device=="cuda" else "int8")
 
 def find_optimal_audio_device():
     """
@@ -1408,10 +1484,10 @@ if __name__ == "__main__":
     app.processEvents()
 
     print(f"[SYSTEM] Loading Models (Whisper/VAD)... Please wait.")
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    DEVICE, WHISPER_DEVICE, DML_DEVICE = select_compute_backend()
     
     # CUDA 미감지 시 사용자에게 설치 안내
-    if not torch.cuda.is_available():
+    if DEVICE == "cpu":
         loading_dialog.hide()
         
         msg_box = QtWidgets.QMessageBox()
@@ -1486,7 +1562,10 @@ if __name__ == "__main__":
     loading_dialog.setLabelText(f"Whisper 모델 로드 중... (Device: {DEVICE.upper()})")
     loading_dialog.setValue(1)
     app.processEvents()
-    GLOBAL_WHISPER = WhisperModel(WHISPER_MODEL_SIZE, device=DEVICE, compute_type="float16" if DEVICE=="cuda" else "int8")
+    GLOBAL_WHISPER = init_whisper_model(DEVICE, WHISPER_DEVICE)
+    if GLOBAL_WHISPER is None:
+        DEVICE, WHISPER_DEVICE, DML_DEVICE = "cpu", "cpu", None
+        GLOBAL_WHISPER = init_whisper_model(DEVICE, WHISPER_DEVICE)
     
     loading_dialog.setLabelText("VAD 모델 로드 중...")
     loading_dialog.setValue(2)
@@ -1563,6 +1642,14 @@ if __name__ == "__main__":
                     else:
                         vad_load_error = RuntimeError("VAD 자동 다운로드가 비활성화되어 있습니다.")
         
+        if GLOBAL_VAD is not None and DML_DEVICE is not None:
+            try:
+                GLOBAL_VAD = GLOBAL_VAD.to(DML_DEVICE)
+                GLOBAL_VAD.eval()
+                print("[VAD] DirectML 장치로 이동 완료")
+            except Exception as e:
+                print(f"[VAD] DirectML 이동 실패: {e}")
+
         if GLOBAL_VAD is None:
             raise RuntimeError(f"VAD 모델 로드 실패: {vad_load_error}")
             
