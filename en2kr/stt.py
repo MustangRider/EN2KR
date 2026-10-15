@@ -324,6 +324,8 @@ class SttEngine:
     # Tiny also scores strongly Korean-accented English as Korean (0.89 on our
     # sample), so a mid score only skips when the English transcript is unsure too
     # (Korean speech: avg_logprob -0.35..-0.70, accented English: -0.17).
+    # The detector is optional: GPU only, loaded in the background after the main model,
+    # and switched off (with a notice) if it can't be downloaded, loaded or run.
     GATE_MODEL = "tiny"
     GATE_SURE = 0.98
     GATE_LIKELY = 0.6
@@ -337,6 +339,10 @@ class SttEngine:
         self.device = None
         self.compute_type = None
         self.cfg = {}
+        self.gate_state = "off"   # off (not needed) | loading | on | failed | cpu
+        self._gate_done = threading.Event()
+        self._gen = 0             # bumped on every load; stale detector threads drop their result
+        self._notice = self._changed = None
         self._cloud_paused_until = 0.0
         self._lock = threading.Lock()
 
@@ -350,11 +356,21 @@ class SttEngine:
             return f"Groq {self.cloud.model} · 클라우드{left}"
         if not self.model:
             return "로드 안 됨"
-        extra = " · 한국어 판별" if self.gate is not None else ""
+        extra = {"on": " · 한국어 판별", "loading": " · 한국어 판별 준비 중",
+                 "failed": " · 한국어 판별 꺼짐", "cpu": " · 한국어 판별 꺼짐"}.get(self.gate_state, "")
         return f"{self.model_id} · {self.device.upper()} · {self.compute_type}{extra}"
 
-    def load(self, cfg, progress=None):
-        """Load per cfg (the 'stt' settings section). Returns a list of warnings."""
+    def wait_gate(self, timeout=None):
+        """Block until the Korean detector finished loading (or was never needed)."""
+        return self._gate_done.wait(timeout)
+
+    def load(self, cfg, progress=None, notice=None, changed=None):
+        """Load per cfg (the 'stt' settings section). Returns a list of warnings.
+
+        notice(msg) and changed() are called later from the detector thread
+        (detector failed / detector state changed).
+        """
+        self._notice, self._changed = notice, changed
         if cfg.get("engine") == "cloud":
             return self._load_cloud(cfg)
         from faster_whisper import WhisperModel
@@ -378,24 +394,55 @@ class SttEngine:
                 if device == "cuda":
                     warnings.append(f"GPU로 모델을 불러오지 못해 CPU로 실행합니다. ({e})")
                 continue
-            gate = None
             info = _BY_ID.get(model_id)
-            if info and info.kind == "english" and cfg.get("skip_korean", True):
-                try:
-                    gate = WhisperModel(download(self.GATE_MODEL, progress), device=device, compute_type=compute,
-                                        cpu_threads=2)
-                    gate.detect_language(np.zeros(16000, np.float32))
-                except Exception as e:
-                    log.warning("Korean detector unavailable: %s", e)
-                    warnings.append(f"한국어 판별 모델을 불러오지 못해 한국어 음성 건너뛰기가 꺼집니다. ({e})")
-                    gate = None
+            wants_gate = bool(info and info.kind == "english" and cfg.get("skip_korean", True))
             with self._lock:
-                self.model, self.gate, self.cloud = model, gate, None
+                self._gen += 1
+                gen = self._gen
+                self.model, self.gate, self.cloud = model, None, None
                 self.model_id, self.device, self.compute_type = model_id, device, compute
                 self.cfg = dict(cfg)
+                self.gate_state = ("loading" if device == "cuda" else "cpu") if wants_gate else "off"
+                self._gate_done.clear() if self.gate_state == "loading" else self._gate_done.set()
+            if self.gate_state == "loading":
+                threading.Thread(target=self._load_gate, args=(gen, compute), name="stt-gate", daemon=True).start()
+            elif self.gate_state == "cpu":
+                warnings.append("GPU(CUDA)를 쓸 수 없어 한국어 판별 모델을 켜지 않았습니다. 영어 전용 엔진은 한국어를 "
+                                "영어로 바꿔 받아 적으니, 한국어를 건너뛰려면 '다국어' 엔진이나 클라우드 인식을 쓰세요.")
             log.info("STT ready: %s", self.describe())
             return warnings
         raise RuntimeError(f"음성 인식 모델을 불러오지 못했습니다: {last_error}")
+
+    def _load_gate(self, gen, compute):
+        from faster_whisper import WhisperModel
+        try:
+            gate = WhisperModel(download(self.GATE_MODEL), device="cuda", compute_type=compute, cpu_threads=2)
+            gate.detect_language(np.zeros(16000, np.float32))
+        except Exception as e:
+            log.warning("Korean detector unavailable: %s", e)
+            self._gate_off(gen, f"한국어 판별 모델을 불러오지 못해 한국어 음성 건너뛰기를 끕니다. ({e})")
+            return
+        with self._lock:
+            if gen != self._gen:
+                return  # the engine was reloaded meanwhile
+            self.gate, self.gate_state = gate, "on"
+            self._gate_done.set()
+            changed = self._changed
+        log.info("Korean detector ready")
+        if changed:
+            changed()
+
+    def _gate_off(self, gen, message):
+        with self._lock:
+            if gen != self._gen:
+                return
+            self.gate, self.gate_state = None, "failed"
+            self._gate_done.set()
+            notice, changed = self._notice, self._changed
+        if notice:
+            notice(message)
+        if changed:
+            changed()
 
     def _load_cloud(self, cfg):
         cloud_cfg = cfg.get("cloud") or {}
@@ -408,7 +455,10 @@ class SttEngine:
         except CloudError as e:
             raise RuntimeError(str(e)) from e
         with self._lock:
+            self._gen += 1  # a detector still loading for a previous local model is dropped
             self.model = self.gate = None  # frees any local model's VRAM
+            self.gate_state = "off"
+            self._gate_done.set()
             self.cloud = client
             self.model_id, self.device, self.compute_type = client.model, "cloud", ""
             self._cloud_paused_until = 0.0
@@ -476,6 +526,7 @@ class SttEngine:
     def transcribe(self, audio, prev_text=None):
         with self._lock:
             model, gate, cfg, model_id, cloud = self.model, self.gate, dict(self.cfg), self.model_id, self.cloud
+            gen = self._gen
         if cloud is not None:
             return self._transcribe_cloud(cloud, audio, prev_text, cfg)
         if model is None:
@@ -498,10 +549,15 @@ class SttEngine:
         gate_ko = None
         if mode == "english":
             if gate is not None and skip_korean:
-                _, _, probs = gate.detect_language(audio)
-                gate_ko = dict(probs or []).get("ko", 0.0)
-                if gate_ko >= self.GATE_SURE:
-                    return self._skipped(result, gate_ko, t0)
+                try:
+                    _, _, probs = gate.detect_language(audio)
+                except Exception as e:
+                    log.warning("Korean detector failed, switching it off: %s", e)
+                    self._gate_off(gen, f"한국어 판별 중 오류가 나서 한국어 음성 건너뛰기를 끕니다. ({e})")
+                else:
+                    gate_ko = dict(probs or []).get("ko", 0.0)
+                    if gate_ko >= self.GATE_SURE:
+                        return self._skipped(result, gate_ko, t0)
             segments, info = model.transcribe(audio, language="en", **opts)
         elif mode == "auto" or skip_korean:
             # Let Whisper detect the language first (fixed mode needs it only to spot Korean).

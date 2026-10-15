@@ -88,7 +88,9 @@ def english_engine():
         pytest.skip("models not downloaded")
     eng = stt.SttEngine()
     eng.load({"model": "distil-large-v3.5", "mode": "english", "device": "auto", "skip_korean": True})
-    assert eng.gate is not None
+    if eng.device != "cuda":
+        pytest.skip("the Korean detector is GPU-only")
+    assert eng.wait_gate(120) and eng.gate_state == "on"
     return eng
 
 

@@ -153,7 +153,8 @@ class Pipeline:
             with self._stt_lock:
                 self.events.status("stt", "loading", "음성 인식 모델 준비 중...")
                 try:
-                    warnings = self.engine.load(cfg, progress=self.events.download)
+                    warnings = self.engine.load(cfg, progress=self.events.download, notice=self.events.notice,
+                                                changed=self._report_stt_ready)
                 except Exception as e:
                     log.exception("STT load failed")
                     self.events.status("stt", "error", str(e))

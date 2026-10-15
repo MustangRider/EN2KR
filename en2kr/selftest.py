@@ -51,6 +51,7 @@ def run(settings, wav_path, model=None, mode=None, timeout=900):
             time.sleep(0.2)
         if not p.engine.ready:
             return {"ok": False, "status": status, "lines": lines, "translations": translations, "notes": notes}
+        p.engine.wait_gate(timeout=300)  # the Korean detector loads in the background
         audio = load_wav(wav_path)
         p.feed_file_audio(np.concatenate([np.zeros(8000, np.float32), audio, np.zeros(32000, np.float32)]))
         sent = lambda: [l for l in lines if l.line_id is not None]
