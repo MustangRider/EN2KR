@@ -407,8 +407,9 @@ class SttEngine:
             if self.gate_state == "loading":
                 threading.Thread(target=self._load_gate, args=(gen, compute), name="stt-gate", daemon=True).start()
             elif self.gate_state == "cpu":
-                warnings.append("GPU(CUDA)를 쓸 수 없어 한국어 판별 모델을 켜지 않았습니다. 영어 전용 엔진은 한국어를 "
-                                "영어로 바꿔 받아 적으니, 한국어를 건너뛰려면 '다국어' 엔진이나 클라우드 인식을 쓰세요.")
+                warnings.append("GPU(CUDA)를 쓸 수 없어 한국어 판별 모델(tiny)을 켜지 않았습니다. 영어 전용 엔진은 한국어를 "
+                                "영어로 바꿔 받아 적습니다. 한국어를 건너뛰려면 '인식 엔진'에서 다국어 엔진이나 "
+                                "클라우드 · Groq를 고르세요. 둘 다 이 모델 없이 한국어를 가려냅니다.")
             log.info("STT ready: %s", self.describe())
             return warnings
         raise RuntimeError(f"음성 인식 모델을 불러오지 못했습니다: {last_error}")
