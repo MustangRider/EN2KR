@@ -131,7 +131,7 @@ DEFAULTS = {
     "hallucinations": DEFAULT_HALLUCINATIONS,
     "overlay": {"x": 100, "y": 100, "w": 800, "h": 250, **OVERLAY_STYLE_DEFAULTS},
     "hotkeys": {"edit_mode": DEFAULT_EDIT_KEY, "translate_toggle": DEFAULT_TOGGLE_KEY},
-    "sound": {"toggle": True, "volume": 50},   # chime when translation is switched on/off
+    "sound": {"toggle": True, "volume": 50},   # beeps when translation is switched on/off
     "logging": {"save_transcripts": True, "retention_days": 14},
     "ui": {"cpu_warning_dismissed": False, "onboarding_done": False},
 }

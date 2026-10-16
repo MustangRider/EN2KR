@@ -587,7 +587,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                f"{html.escape(str(err))}</span>")
 
     def set_translating(self, on):
-        """Translation on/off (hotkey or button), with the on/off chime."""
+        """Translation on/off (hotkey or button), with the on/off beeps."""
         self.pipeline.set_enabled(on)
         self.overlay.set_translating(on)
         self._show_toggle(on)

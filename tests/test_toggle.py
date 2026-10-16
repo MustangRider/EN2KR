@@ -71,13 +71,14 @@ def _pitch(samples, start, end):
     return np.fft.rfftfreq(len(seg), 1 / sounds.SAMPLE_RATE)[np.argmax(np.abs(np.fft.rfft(seg)))]
 
 
-def test_chimes_rise_and_fall_softly():
+def test_beeps_rise_and_fall_without_clicks():
     on, off = sounds.chime(True, 0.5), sounds.chime(False, 0.5)
-    assert _pitch(on, 0.005, 0.07) < _pitch(on, 0.12, 0.3)
-    assert _pitch(off, 0.005, 0.07) > _pitch(off, 0.12, 0.3)
+    assert _pitch(on, 0.0, 0.07) < _pitch(on, 0.11, 0.18)
+    assert _pitch(off, 0.0, 0.07) > _pitch(off, 0.11, 0.18)
     for s in (on, off):
         assert 0.1 < np.max(np.abs(s)) <= sounds.PEAK * 0.5 + 1e-6   # well below full scale
-        assert abs(s[0]) < 1e-3 and np.max(np.abs(s[-100:])) < 0.01  # no click at either end
+        assert abs(s[0]) < 1e-3 and abs(s[-1]) < 1e-2                # no click at either end
+        assert len(s) / sounds.SAMPLE_RATE < 0.25                    # short
     assert np.max(np.abs(sounds.chime(True, 1.0))) > np.max(np.abs(on))
 
 
@@ -85,7 +86,7 @@ def test_chime_file_is_a_valid_wav(tmp_path, monkeypatch):
     monkeypatch.setattr(sounds.paths, "app_dir", lambda: str(tmp_path))
     path = sounds.chime_path(True, 40)
     with wave.open(path) as w:
-        assert w.getframerate() == sounds.SAMPLE_RATE and w.getnchannels() == 1 and w.getnframes() > 10000
+        assert w.getframerate() == sounds.SAMPLE_RATE and w.getnchannels() == 1 and w.getnframes() > 5000
     assert sounds.chime_path(True, 40) == path    # cached per volume
     with wave.open(io.BytesIO(sounds.wav_bytes(sounds.chime(False)))) as w:
         assert w.getsampwidth() == 2
