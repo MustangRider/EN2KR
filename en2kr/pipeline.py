@@ -30,6 +30,7 @@ MAX_HOLD_SEC = 6.0       # never hold a fragment's translation longer than this
 MAX_LINE_CHARS = 220
 CONTEXT_GAP_SEC = 4.0    # previous text is used as Whisper context if this close
 STALL_FLUSH_SEC = 1.0    # close an utterance if audio stops arriving
+KOREAN_NOTE = "한국어 음성 건너뜀"
 MAX_BACKLOG_SEC = 10.0   # Groq pacing: a subtitle later than this is useless, drop it
 MAX_JOIN_SEC = 28.0      # Groq pacing: a joined request stays inside one 30 s Whisper window
 JOIN_GAP_SEC = 0.8       # Groq pacing: a fragment this close is the same speaker going on
@@ -457,7 +458,7 @@ class Pipeline:
             self.events.status("stt", "wait", r.skip_note)
         line = SttLine(r.text, r.text, r.language, None, latency=r.latency, rejected=r.rejected, via=r.via)
         if r.skipped == "korean":
-            line.note = "한국어 음성 건너뜀"
+            line.note = KOREAN_NOTE
         elif r.skipped:
             line.note = r.skip_note or r.skipped
         elif not r.text:

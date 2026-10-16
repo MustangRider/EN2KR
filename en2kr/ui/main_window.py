@@ -8,7 +8,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from .. import APP_NAME, __version__, gpu, paths, sounds
 from ..audio import device as audio_device
 from ..audio import sessions
-from ..pipeline import Pipeline
+from ..pipeline import KOREAN_NOTE, Pipeline
 from ..settings import DEFAULT_EDIT_KEY, DEFAULT_TOGGLE_KEY
 from .api_dialog import ApiDialog
 from .bridge import PipelineBridge, Worker
@@ -505,6 +505,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.overlay.set_speaking(active)
 
     def _on_stt(self, line):
+        if line.note == KOREAN_NOTE:
+            return  # skipping Korean is expected; listing every skip only clutters the log
         if line.note:
             text = html.escape(line.raw) if line.raw else ""
             self._log_html(f"<span style='color:#6e7681'>[건너뜀 · {html.escape(line.note)}] {text}</span>")
@@ -594,7 +596,6 @@ class MainWindow(QtWidgets.QMainWindow):
         snd = self.settings.section("sound")
         if snd.get("toggle", True):
             sounds.play_toggle(on, int(snd.get("volume", 50)))
-        self._log_html(f"<span style='color:#58a6ff'>번역 {'켬' if on else '끔'}</span>")
 
     def _toggle_edit(self):
         if self.overlay.previewing and not self.overlay.edit_mode:

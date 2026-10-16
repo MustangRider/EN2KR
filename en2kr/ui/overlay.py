@@ -169,7 +169,7 @@ class OverlayWindow(QtWidgets.QWidget):
         self.update()
 
     def set_translating(self, on):
-        """Translation switched on/off: brief notice in the middle, and an "off" label while off."""
+        """Translation switched on/off: brief notice in the middle."""
         self.translating = bool(on)
         text, color = ("번역 켜짐", QtGui.QColor(110, 220, 140)) if on else ("번역 꺼짐", QtGui.QColor(200, 200, 200))
         self._toast = (text, color, time.monotonic() + TOAST_SEC)
@@ -391,7 +391,7 @@ class OverlayWindow(QtWidgets.QWidget):
         self.renderer.dpr = self.devicePixelRatioF()
         top = self.toolbar.geometry().bottom() + 8 if self.toolbar.isVisible() else 8  # keep text clear of it
         self.renderer.paint(p, rect, self._visible_entries(), banner=self._banner_text(), speaking=self.speaking,
-                            top=top, bottom_reserve=32 if self.edit_mode else 8, off=not self.translating)
+                            top=top, bottom_reserve=32 if self.edit_mode else 8)
         self._paint_toast(p, rect)
         p.end()
         delay = self._next_frame_ms()
