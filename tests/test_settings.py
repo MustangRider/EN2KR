@@ -111,7 +111,7 @@ def test_f12_edit_key_moves_off_steam_screenshot_key(tmp_path):
     p = tmp_path / "s.json"
     p.write_text(json.dumps({"version": 2, "hotkeys": {"edit_mode": "f12"}}), encoding="utf-8")
     s = Settings(str(p)).load()
-    assert s.get("hotkeys.edit_mode") == "ctrl+alt+o" and s.get("version") == 3 and s.notes
+    assert s.get("hotkeys.edit_mode") == "ctrl+alt+o" and s.get("version") == 4 and s.notes
     s.save()
     again = Settings(str(p)).load()
     assert again.get("hotkeys.edit_mode") == "ctrl+alt+o" and not again.notes
@@ -130,3 +130,29 @@ def test_new_cloud_options_have_defaults(tmp_path):
     s = Settings(str(p)).load()
     assert s.get("stt.cloud.rpm") == 20 and s.get("stt.cloud.fallback_model") == ""
     assert s.get("translate.use_glossary") is True
+
+
+def test_new_install_gets_youtube_captions_at_the_bottom(tmp_path):
+    s = Settings(str(tmp_path / "s.json")).load()
+    ov = s.section("overlay")
+    assert ov["x"] is None and ov["y"] is None              # the overlay places itself at the bottom centre
+    assert ov["box"] and ov["align"] == "center" and ov["anchor"] == "bottom" and not ov["show_speaking"]
+
+
+def test_untouched_classic_overlay_moves_to_the_new_defaults(tmp_path):
+    from en2kr.settings import OVERLAY_CLASSIC_LOOK
+    p = tmp_path / "s.json"
+    classic = {"x": 100, "y": 100, "w": 800, "h": 250, "show_speaking": True, **OVERLAY_CLASSIC_LOOK}
+    p.write_text(json.dumps({"version": 3, "overlay": classic}), encoding="utf-8")
+    s = Settings(str(p)).load()
+    ov = s.section("overlay")
+    assert ov["align"] == "center" and ov["box"] and not ov["show_speaking"] and ov["x"] is None and s.notes
+
+
+def test_customised_overlay_is_left_alone(tmp_path):
+    from en2kr.settings import OVERLAY_CLASSIC_LOOK
+    p = tmp_path / "s.json"
+    mine = {"x": 300, "y": 900, "w": 1200, "h": 200, "show_speaking": True, **OVERLAY_CLASSIC_LOOK, "align": "right"}
+    p.write_text(json.dumps({"version": 3, "overlay": mine}), encoding="utf-8")
+    ov = Settings(str(p)).load().section("overlay")
+    assert ov["align"] == "right" and ov["box"] is False and ov["show_speaking"] and (ov["x"], ov["y"]) == (300, 900)

@@ -72,23 +72,30 @@ DEFAULT_EDIT_KEY = "ctrl+alt+o"
 DEFAULT_TOGGLE_KEY = "ctrl+alt"
 
 # Everything about the overlay except its position/size (x, y, w, h); also what a style file holds.
+# The default look is the "유튜브 자막" preset: centred lines on a dark box at the bottom of the overlay.
 OVERLAY_STYLE_DEFAULTS = {
-    "font_family": "Malgun Gothic", "font_size": 18, "bold": True,
+    "font_family": "Malgun Gothic", "font_size": 18, "bold": False,
     "line_spacing": 12, "max_lines": 5, "show_original": True, "fade_sec": 0, "bg_opacity": 0,
-    "original_color": "#ffe650", "translation_color": "#ffffff", "error_color": "#ff9650",
+    "original_color": "#d6d6d6", "translation_color": "#ffffff", "error_color": "#ff9650",
     "text_opacity": 100,
-    "effect": "shadow", "effect_color": "#000000", "effect_size": 2,   # effect: shadow | outline | none
-    "box": False, "box_color": "#000000", "box_opacity": 55,           # a background box behind each line
-    "original_scale": 100,                                             # original text size, % of font_size
-    "original_marker": "●", "translation_marker": "ㄴ",
-    "align": "left",            # left | center | right
-    "anchor": "top",            # top | bottom: where the lines sit inside the overlay
+    "effect": "none", "effect_color": "#000000", "effect_size": 2,     # effect: shadow | outline | none
+    "box": True, "box_color": "#000000", "box_opacity": 65,            # a background box behind each line
+    "original_scale": 85,                                              # original text size, % of font_size
+    "original_marker": "", "translation_marker": "",
+    "align": "center",          # left | center | right
+    "anchor": "bottom",         # top | bottom: where the lines sit inside the overlay
     "newest_first": False,      # newest line on top instead of at the bottom
     "translation_first": False,
     "snap": True,               # edit mode: dragging snaps to screen edges and centre
-    "show_speaking": True,      # the dot that lights up while someone speaks
+    "show_speaking": False,     # the dot that lights up while someone speaks
     "toolbar": True,            # edit mode: small toolbar inside the overlay
 }
+# The v2.0-2.2.1 look, kept as the "클래식" preset.
+OVERLAY_CLASSIC_LOOK = {
+    "bold": True, "original_color": "#ffe650", "effect": "shadow", "box": False, "box_opacity": 55,
+    "original_scale": 100, "original_marker": "●", "translation_marker": "ㄴ", "align": "left", "anchor": "top",
+}
+_OLD_OVERLAY_GEOMETRY = (100, 100, 800, 250)
 
 OPENAI_PRESETS = {
     "gemini": {"label": "Google Gemini", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai"},
@@ -99,7 +106,7 @@ OPENAI_PRESETS = {
 }
 
 DEFAULTS = {
-    "version": 3,
+    "version": 4,
     # mode: "process" (one program's audio) or "device" (any input device, advanced)
     "audio": {"mode": "process", "process_name": "", "device_name": ""},
     "vad": {"threshold": 0.3, "silence_sec": 0.5, "preroll_sec": 0.3,
@@ -129,7 +136,8 @@ DEFAULTS = {
     "glossary": DEFAULT_GLOSSARY,
     "slang": DEFAULT_SLANG,
     "hallucinations": DEFAULT_HALLUCINATIONS,
-    "overlay": {"x": 100, "y": 100, "w": 800, "h": 250, **OVERLAY_STYLE_DEFAULTS},
+    # x/y None: the overlay places itself at the bottom centre of the main screen on first start
+    "overlay": {"x": None, "y": None, "w": 1000, "h": 260, **OVERLAY_STYLE_DEFAULTS},
     "hotkeys": {"edit_mode": DEFAULT_EDIT_KEY, "translate_toggle": DEFAULT_TOGGLE_KEY},
     "sound": {"toggle": True, "volume": 50},   # beeps when translation is switched on/off
     "logging": {"save_transcripts": True, "retention_days": 14},
@@ -165,6 +173,22 @@ def _upgrade_to_3(data, notes):
         notes.append("오버레이 편집 모드 단축키를 F12에서 Ctrl+Alt+O로 바꿨습니다 (F12는 스팀 스크린샷 키와 겹칩니다). "
                      "'단축키·기록'에서 다른 키로 바꿀 수 있습니다.")
     data["version"] = 3
+
+
+def _upgrade_to_4(data, notes):
+    """v2.2.2: subtitles that still look and sit as installed get the new defaults
+    (YouTube-style captions at the bottom centre, no speaking dot). Customised ones are left alone."""
+    ov = data.setdefault("overlay", {})
+    if all(ov.get(k) == v for k, v in OVERLAY_CLASSIC_LOOK.items()):
+        for k in OVERLAY_CLASSIC_LOOK:
+            ov[k] = OVERLAY_STYLE_DEFAULTS[k]
+        if ov.get("show_speaking") is True:
+            ov["show_speaking"] = False
+        notes.append("자막 기본 모양을 '유튜브 자막'으로 바꿨습니다. 예전 모양은 '오버레이 꾸미기' → 프리셋 '클래식'으로 되돌릴 수 있습니다.")
+    if tuple(ov.get(k) for k in ("x", "y", "w", "h")) == _OLD_OVERLAY_GEOMETRY:
+        ov["x"] = ov["y"] = None   # never moved: start at the bottom centre like a new install
+        ov["w"], ov["h"] = DEFAULTS["overlay"]["w"], DEFAULTS["overlay"]["h"]
+    data["version"] = 4
 
 
 def _map_secrets(data, fn):
@@ -230,6 +254,8 @@ class Settings:
                         _drop_voicechat(self._data["audio"])
                     if int(self._data.get("version") or 2) < 3:
                         _upgrade_to_3(self._data, self.notes)
+                    if int(self._data.get("version") or 2) < 4:
+                        _upgrade_to_4(self._data, self.notes)
                     return self
                 except (OSError, ValueError) as e:
                     backup = f"{self.path}.corrupt-{time.strftime('%Y%m%d-%H%M%S')}"

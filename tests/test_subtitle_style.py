@@ -136,10 +136,10 @@ def test_overlay_preview_shows_samples_and_restores(app, tmp_path):
     from en2kr.ui.overlay import OverlayWindow
     s = Settings(str(tmp_path / "s.json")).load()
     ov = OverlayWindow(s)
-    ov.set_style_preview({**OVERLAY_STYLE_DEFAULTS, "align": "center"})
-    assert len(ov._visible_entries()) == len(ss.SAMPLE_LINES) and ov.renderer.cfg["align"] == "center"
+    ov.set_style_preview({**OVERLAY_STYLE_DEFAULTS, "align": "right"})
+    assert len(ov._visible_entries()) == len(ss.SAMPLE_LINES) and ov.renderer.cfg["align"] == "right"
     ov.set_style_preview(None)
-    assert ov._visible_entries() == [] and ov.renderer.cfg["align"] == "left"
+    assert ov._visible_entries() == [] and ov.renderer.cfg["align"] == OVERLAY_STYLE_DEFAULTS["align"]
     ov.close()
 
 
@@ -159,3 +159,15 @@ def test_cache_stays_small_and_pixmaps_fit_their_text(app):
 
 def test_previews_follow_the_line_count():
     assert len(ss.sample_entries(1)) == 1 and len(ss.sample_entries()) == len(ss.SAMPLE_LINES)
+
+
+def test_first_start_places_the_overlay_at_the_bottom_centre(app, tmp_path):
+    from en2kr.settings import Settings
+    from en2kr.ui.overlay import OverlayWindow
+    s = Settings(str(tmp_path / "s.json")).load()
+    ov = OverlayWindow(s)
+    screen = QtGui.QGuiApplication.primaryScreen().geometry()
+    assert abs(ov.geometry().center().x() - screen.center().x()) <= 2
+    assert ov.geometry().bottom() > screen.center().y()
+    assert isinstance(s.get("overlay.x"), int)               # saved, so the next start keeps it
+    ov.close()

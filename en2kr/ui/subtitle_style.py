@@ -14,7 +14,7 @@ from typing import Optional
 
 from PySide6 import QtCore, QtGui
 
-from ..settings import OVERLAY_STYLE_DEFAULTS
+from ..settings import OVERLAY_CLASSIC_LOOK, OVERLAY_STYLE_DEFAULTS
 
 LEFT_MARGIN = 15
 DOT_MARGIN = 30          # right margin that keeps text clear of the speaking dot
@@ -36,14 +36,12 @@ _LOOK = ("bold", "show_original", "original_color", "translation_color", "error_
          "original_marker", "translation_marker", "align", "anchor", "newest_first", "translation_first")
 _BASE = {k: OVERLAY_STYLE_DEFAULTS[k] for k in _LOOK}
 PRESETS = {
-    "기본": dict(_BASE),
-    "유튜브 자막": {**_BASE, "bold": False, "original_color": "#d6d6d6", "effect": "none", "box": True,
-                "box_opacity": 65, "original_scale": 85, "original_marker": "", "translation_marker": "",
-                "align": "center", "anchor": "bottom"},
-    "번역만": {**_BASE, "show_original": False, "effect": "outline", "effect_size": 3, "translation_marker": "",
-            "align": "center", "anchor": "bottom"},
-    "고대비": {**_BASE, "original_color": "#7fe3ff", "translation_color": "#ffff3c", "effect": "outline",
-            "effect_size": 3, "box": True, "box_opacity": 80, "original_scale": 90},
+    "유튜브 자막": dict(_BASE),                       # the default look
+    "클래식": {**_BASE, **OVERLAY_CLASSIC_LOOK},       # v2.0-2.2.1
+    "번역만": {**_BASE, "show_original": False, "bold": True, "effect": "outline", "effect_size": 3,
+            "box": False},
+    "고대비": {**_BASE, "bold": True, "original_color": "#7fe3ff", "translation_color": "#ffff3c",
+            "effect": "outline", "effect_size": 3, "box_opacity": 80, "original_scale": 90},
 }
 PLACEMENTS = {"top": "상단 가운데", "center": "화면 가운데", "bottom_left": "왼쪽 아래",
               "bottom": "하단 가운데", "bottom_right": "오른쪽 아래"}

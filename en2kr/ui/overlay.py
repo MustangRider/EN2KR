@@ -88,7 +88,11 @@ class OverlayWindow(QtWidgets.QWidget):
         self._toast = None    # (text, color, until)
         self._toast_timer = QtCore.QTimer(self, singleShot=True, timeout=self.update)
         ov = settings.section("overlay")
-        self.setGeometry(ov["x"], ov["y"], ov["w"], ov["h"])
+        if ov.get("x") is None or ov.get("y") is None:   # first start: bottom centre of the main screen
+            self.resize(int(ov["w"]), int(ov["h"]))
+            self.place("bottom", QtGui.QGuiApplication.primaryScreen())
+        else:
+            self.setGeometry(ov["x"], ov["y"], ov["w"], ov["h"])
         self._ensure_on_screen()
         self.apply_settings()
 
@@ -247,7 +251,7 @@ class OverlayWindow(QtWidgets.QWidget):
             menu.addAction(label, lambda k=key: self.place(k))
         where.setMenu(menu)
         lay.addWidget(where)
-        button("꾸미기…", "오버레이 꾸미기 창 열기", self.customize_requested.emit)
+        button("꾸미기", "오버레이 꾸미기 창 열기", self.customize_requested.emit)
         button("완료", "편집 모드 끝내기", self.edit_done.emit)
         bar.adjustSize()
         bar.hide()
