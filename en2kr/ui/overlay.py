@@ -1,8 +1,9 @@
 """Transparent, click-through subtitle overlay drawn over the game.
 
 Lines are keyed by line_id: the original appears as soon as it is recognised
-and the translation fills in when it arrives. Long sentences wrap instead of
-being cut off at the window edge (v1 drew single lines).
+and the translation fills in when it arrives. Long sentences wrap at the window
+edge (v1 drew single lines), indented under their text rather than the marker.
+A warning line at the top reports a Groq limit with a countdown.
 """
 import ctypes
 import time
@@ -11,6 +12,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
+
+from ..stt import fmt_wait
 
 GWL_EXSTYLE = -20
 WS_EX_TRANSPARENT = 0x20
@@ -68,6 +71,8 @@ class OverlayWindow(QtWidgets.QWidget):
         self.grip.hide()
         # Single-shot, re-armed after each paint: 16 ms while fading, otherwise just when the next fade starts.
         self._anim = QtCore.QTimer(self, singleShot=True, timeout=self.update)
+        self._banner = None   # (message, until) while a Groq limit is in force
+        self._banner_timer = QtCore.QTimer(self, interval=1000, timeout=self.update)  # countdown
         ov = settings.section("overlay")
         self.setGeometry(ov["x"], ov["y"], ov["w"], ov["h"])
         self._ensure_on_screen()
@@ -127,6 +132,27 @@ class OverlayWindow(QtWidgets.QWidget):
     def clear(self):
         self.entries.clear()
         self.update()
+
+    def show_banner(self, message, seconds):
+        """Warning line with a countdown; an empty message (or the countdown ending) removes it."""
+        if message and seconds > 0:
+            self._banner = (message, time.monotonic() + seconds)
+            self._banner_timer.start()
+        else:
+            self._banner = None
+            self._banner_timer.stop()
+        self.update()
+
+    def _banner_text(self, now=None):
+        if not self._banner:
+            return None
+        message, until = self._banner
+        left = until - (time.monotonic() if now is None else now)
+        if left <= 0:
+            self._banner = None
+            self._banner_timer.stop()
+            return None
+        return f"⚠ {message} · {fmt_wait(left)} 후 재개"
 
     # ---------- edit mode ----------
     def showEvent(self, event):
@@ -228,16 +254,28 @@ class OverlayWindow(QtWidgets.QWidget):
         return None if wait is None else max(FRAME_MS, int(wait * 1000) + 1)
 
     def _blocks(self, e):
+        """(marker, text, color) per block; wrapped lines continue under the text, not the marker."""
         blocks = []
         if self.cfg.get("show_original", True):
-            blocks.append((f"● {e.en}", QtGui.QColor(255, 230, 80)))
+            blocks.append(("● ", e.en, QtGui.QColor(255, 230, 80)))
         if e.error:
-            blocks.append((f"ㄴ ⚠ {e.error[:120]}", QtGui.QColor(255, 150, 80)))
+            blocks.append(("ㄴ ", f"⚠ {e.error[:120]}", QtGui.QColor(255, 150, 80)))
         elif e.kr is None:
-            blocks.append(("ㄴ …", QtGui.QColor(170, 170, 170)))
+            blocks.append(("ㄴ ", "…", QtGui.QColor(170, 170, 170)))
         else:
-            blocks.append((f"ㄴ {e.kr}", QtGui.QColor(255, 255, 255)))
+            blocks.append(("ㄴ ", e.kr, QtGui.QColor(255, 255, 255)))
         return blocks
+
+    @staticmethod
+    def _draw_text(p, rect, flags, text, color, alpha):
+        shadow = QtGui.QColor(0, 0, 0, int(200 * alpha))
+        for dx, dy in ((2, 2), (1, 1), (-1, 1)):
+            p.setPen(shadow)
+            p.drawText(rect.translated(dx, dy), flags, text)
+        c = QtGui.QColor(color)
+        c.setAlpha(int(255 * alpha))
+        p.setPen(c)
+        p.drawText(rect, flags, text)
 
     def paintEvent(self, event):
         p = QtGui.QPainter(self)
@@ -261,35 +299,41 @@ class OverlayWindow(QtWidgets.QWidget):
         p.setBrush(QtGui.QColor(255, 60, 60) if self.speaking else QtGui.QColor(110, 110, 110, 180))
         p.drawEllipse(rect.width() - 22, 10, 10, 10)
 
-        p.setFont(self.font)
-        fm = QtGui.QFontMetrics(self.font)
         width = max(50, rect.width() - 45)
         flags = QtCore.Qt.TextFlag.TextWordWrap | QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop
+        y = 8
+        banner = self._banner_text()
+        if banner:
+            bfont = QtGui.QFont(self.font)
+            bfont.setPointSize(max(9, int(self.cfg["font_size"] * 0.7)))
+            p.setFont(bfont)
+            bh = QtGui.QFontMetrics(bfont).boundingRect(QtCore.QRect(0, 0, width, 100000), flags, banner).height()
+            self._draw_text(p, QtCore.QRect(15, y, width, bh), flags, banner, QtGui.QColor(255, 170, 60), 1.0)
+            y += bh + 8
+
+        p.setFont(self.font)
+        fm = QtGui.QFontMetrics(self.font)
         laid = []
         spacing = int(self.cfg["line_spacing"])
         for e, alpha, grow in self._visible_entries():
-            blocks = [(t, c, fm.boundingRect(QtCore.QRect(0, 0, width, 100000), flags, t).height())
-                      for t, c in self._blocks(e)]
-            full = sum(h + 2 for _, _, h in blocks) + spacing  # same as what the drawing loop advances
+            blocks = []
+            for marker, text, color in self._blocks(e):
+                indent = fm.horizontalAdvance(marker)
+                h = fm.boundingRect(QtCore.QRect(0, 0, max(20, width - indent), 100000), flags, text).height()
+                blocks.append((marker, indent, text, color, h))
+            full = sum(b[4] + 2 for b in blocks) + spacing  # same as what the drawing loop advances
             laid.append((blocks, alpha, full * grow))
-        avail = rect.height() - (40 if self.edit_mode else 16) + spacing
+        avail = rect.height() - y - (32 if self.edit_mode else 8) + spacing
         while len(laid) > 1 and sum(h for _, _, h in laid) > avail:
             laid.pop(0)  # drop the oldest line that doesn't fit
 
-        y = 8
         for blocks, alpha, space in laid:
             if alpha <= 0:  # collapsing: only its (shrinking) space remains
                 y += round(space)
                 continue
-            for text, color, h in blocks:
-                shadow = QtGui.QColor(0, 0, 0, int(200 * alpha))
-                for dx, dy in ((2, 2), (1, 1), (-1, 1)):
-                    p.setPen(shadow)
-                    p.drawText(QtCore.QRect(15 + dx, y + dy, width, h), flags, text)
-                c = QtGui.QColor(color)
-                c.setAlpha(int(255 * alpha))
-                p.setPen(c)
-                p.drawText(QtCore.QRect(15, y, width, h), flags, text)
+            for marker, indent, text, color, h in blocks:
+                self._draw_text(p, QtCore.QRect(15, y, indent, h), flags, marker, color, alpha)
+                self._draw_text(p, QtCore.QRect(15 + indent, y, max(20, width - indent), h), flags, text, color, alpha)
                 y += h + 2
             y += spacing
         p.end()

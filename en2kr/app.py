@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 
-from . import APP_NAME, __version__, gpu, log, paths, stt
+from . import APP_NAME, __version__, gpu, log, paths
 from .settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,6 @@ def main(argv=None):
         return 1
 
     settings = Settings().load()
-    stt.load_stats()
     win = MainWindow(settings)
     win.show()
     win.start()

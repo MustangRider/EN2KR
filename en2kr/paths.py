@@ -20,7 +20,6 @@ else:
     EXE_DIR = RESOURCE_DIR
 
 VAD_MODEL_PATH = os.path.join(RESOURCE_DIR, "models", "silero_vad", "silero_vad.onnx")
-MODEL_STATS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_stats.json")
 ICON_PATH = os.path.join(RESOURCE_DIR, "en2kr.ico")
 
 # Settings file name used by v1, which stored it next to the exe/script.

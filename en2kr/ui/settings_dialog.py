@@ -1,6 +1,8 @@
 """Overlay appearance, hotkey and transcript settings."""
 from PySide6 import QtGui, QtWidgets
 
+from ..settings import DEFAULT_EDIT_KEY
+
 
 class SettingsDialog(QtWidgets.QDialog):
     def __init__(self, settings, parent=None):
@@ -35,10 +37,11 @@ class SettingsDialog(QtWidgets.QDialog):
 
         g2 = QtWidgets.QGroupBox("단축키")
         f2 = QtWidgets.QFormLayout(g2)
-        self.hotkey = QtWidgets.QLineEdit(settings.get("hotkeys.edit_mode", "f12"))
-        self.hotkey.setPlaceholderText("예: f12, ctrl+shift+o")
+        self.hotkey = QtWidgets.QLineEdit(settings.get("hotkeys.edit_mode", DEFAULT_EDIT_KEY))
+        self.hotkey.setPlaceholderText(f"예: {DEFAULT_EDIT_KEY}, scroll lock, pause")
         f2.addRow("편집 모드 전환:", self.hotkey)
-        tip = QtWidgets.QLabel("게임이 관리자 권한으로 실행 중이면 이 프로그램도 관리자 권한으로 실행해야 단축키가 동작합니다.")
+        tip = QtWidgets.QLabel("게임에서 쓰지 않는 키를 고르세요 (F12는 스팀 스크린샷 키와 겹칩니다). "
+                               "게임이 관리자 권한으로 실행 중이면 이 프로그램도 관리자 권한으로 실행해야 단축키가 동작합니다.")
         tip.setObjectName("muted")
         tip.setWordWrap(True)
         f2.addRow(tip)
@@ -84,7 +87,7 @@ class SettingsDialog(QtWidgets.QDialog):
         s.set("overlay.fade_sec", self.fade.value())
         s.set("overlay.bg_opacity", self.bg.value())
         s.set("overlay.show_original", self.orig.isChecked())
-        s.set("hotkeys.edit_mode", self.hotkey.text().strip().lower() or "f12")
+        s.set("hotkeys.edit_mode", self.hotkey.text().strip().lower() or DEFAULT_EDIT_KEY)
         s.set("logging.save_transcripts", self.save_tx.isChecked())
         s.set("logging.retention_days", self.retention.value())
         s.save()

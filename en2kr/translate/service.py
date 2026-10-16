@@ -55,7 +55,7 @@ class TranslationService:
         self._providers = []
         self._glossary = Glossary({})
         self._slang = Slang({})
-        self._use_slang = True
+        self._use_glossary = self._use_slang = True
         self._cache = collections.OrderedDict()
         self._cache_size = 500
         self._cooldown = {}
@@ -78,6 +78,7 @@ class TranslationService:
             self._providers = built
             self._glossary = Glossary(settings.get("glossary", {}))
             self._slang = Slang(settings.get("slang", {}))
+            self._use_glossary = bool(tr.get("use_glossary", True))
             self._use_slang = bool(tr.get("use_slang", True))
             self._cache_size = int(tr.get("cache_size", 500))
             self._cache.clear()
@@ -149,13 +150,14 @@ class TranslationService:
         t0 = time.perf_counter()
         with self._cfg_lock:
             providers = list(self._providers)
-            glossary, slang, use_slang = self._glossary, self._slang, self._use_slang
+            glossary, slang = self._glossary, self._slang
+            use_glossary, use_slang = self._use_glossary, self._use_slang
         res = Result(0, text)
         if not providers:
             res.error = "번역 API가 설정되지 않았습니다"
             return res
         src = slang.expand(text) if use_slang and lang == "en" else text
-        protected, used = glossary.protect(src)
+        protected, used = glossary.protect(src) if use_glossary else (src, [])
         key = (lang, protected.strip().lower())
         with self._cfg_lock:
             hit = self._cache.get(key)

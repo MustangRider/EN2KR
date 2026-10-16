@@ -4,8 +4,11 @@ Each (model, compute_type) pair runs in a fresh subprocess so the number
 includes the CUDA context and cuBLAS/cuDNN workspaces - what the user
 actually pays when the app loads that model.
 
+The app does not read the result: the approximate VRAM shown in the engine
+dialog (ModelInfo.vram_gb in en2kr/stt.py) is rounded from it by hand.
+
 Usage:
-    python tools/measure_models.py path/to/speech.wav [--out en2kr/model_stats.json]
+    python tools/measure_models.py path/to/speech.wav [--out tools/model_stats.json]
 """
 import argparse
 import json
@@ -72,7 +75,7 @@ def child(model, compute_type, wav):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("wav")
-    ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "en2kr", "model_stats.json"))
+    ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "model_stats.json"))
     ap.add_argument("--child", nargs=2, metavar=("MODEL", "COMPUTE_TYPE"))
     args = ap.parse_args()
     if args.child:

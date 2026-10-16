@@ -1,7 +1,9 @@
 """Step-by-step key guides for services that have no Korean sign-up guide of their own."""
 import webbrowser
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtWidgets
+
+from .text_view import text_view
 
 GROQ_KEYS_URL = "https://console.groq.com/keys"
 GROQ_LIMITS_URL = "https://console.groq.com/settings/limits"
@@ -17,6 +19,7 @@ GROQ_GUIDE = (
     "• 같은 키를 음성 인식(인식 엔진 → 클라우드 · Groq)과 번역(번역 API → OpenAI 호환 → Groq)에 함께 쓸 수 있습니다.<br>"
     "• 키는 이 PC의 Windows 계정으로 암호화해서 저장됩니다. 채팅·게시판 같은 곳에는 붙여 넣지 마세요. "
     "남에게 알려졌다면 같은 화면에서 삭제하고 새로 만드세요.<br>"
+    "• 한도는 계정 단위라 같은 계정에서 키를 여러 개 만들어도 늘어나지 않습니다.<br>"
     f"• 남은 한도: <a href='{GROQ_LIMITS_URL}'>console.groq.com/settings/limits</a>"
 )
 
@@ -26,12 +29,7 @@ class KeyGuideDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle(title)
         lay = QtWidgets.QVBoxLayout(self)
-        lab = QtWidgets.QLabel(html_text)
-        lab.setTextFormat(QtCore.Qt.TextFormat.RichText)
-        lab.setWordWrap(True)
-        lab.setOpenExternalLinks(True)
-        lab.setMinimumWidth(460)
-        lay.addWidget(lab)
+        lay.addWidget(text_view(html_text), 1)
         row = QtWidgets.QHBoxLayout()
         open_btn = QtWidgets.QPushButton(open_text)
         open_btn.setObjectName("primary")
@@ -42,7 +40,7 @@ class KeyGuideDialog(QtWidgets.QDialog):
         row.addWidget(open_btn)
         row.addWidget(close)
         lay.addLayout(row)
-        lay.setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetFixedSize)
+        self.resize(620, 400)
 
 
 def show_groq(parent=None):

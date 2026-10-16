@@ -1,6 +1,5 @@
 """Speech-to-text with faster-whisper: model catalog and engine."""
 import importlib.util
-import json
 import logging
 import os
 import sys
@@ -12,7 +11,7 @@ from typing import Optional
 
 import numpy as np
 
-from . import gpu, paths
+from . import gpu
 
 log = logging.getLogger(__name__)
 
@@ -37,42 +36,28 @@ class ModelInfo:
     params: str
     desc: str
     download_gb: float
+    vram_gb: float       # approximate, float16 weights + CUDA runtime
+    speed: str           # relative speed on a GPU
     recommended: bool = False
-    vram_mb: Optional[int] = None   # measured, float16, includes CUDA context
-    rtf: Optional[float] = None     # processing time / audio length (lower is faster)
 
 
 CATALOG = [
     ModelInfo("distil-small.en", "english", "Distil Small (영어)", "166M",
-              "가장 가볍고 빠름. 오인식이 잦은 편 (v1 기본값)", 0.33),
+              "가장 가볍고 빠름. 오인식이 잦은 편 (v1 기본값)", 0.33, 0.5, "매우 빠름"),
     ModelInfo("small.en", "english", "Small (영어)", "244M",
-              "가벼움. distil-small보다 조금 정확", 0.48),
+              "가벼움. distil-small보다 조금 정확", 0.48, 0.7, "빠름"),
     ModelInfo("distil-large-v3.5", "english", "Distil Large v3.5 (영어)", "756M",
-              "영어 고정밀. large급 정확도에 빠른 속도", 1.5, recommended=True),
+              "영어 고정밀. large급 정확도에 빠른 속도", 1.5, 2.1, "빠름", recommended=True),
     ModelInfo("small", "multilingual", "Small (다국어)", "244M",
-              "가벼운 다국어. 짧은 문장의 언어 판별은 약함", 0.48),
+              "가벼운 다국어. 짧은 문장의 언어 판별은 약함", 0.48, 0.8, "빠름"),
     ModelInfo("medium", "multilingual", "Medium (다국어)", "769M",
-              "정확도와 무게의 중간", 1.5),
+              "정확도와 무게의 중간", 1.5, 2.1, "보통"),
     ModelInfo("large-v3-turbo", "multilingual", "Large v3 Turbo (다국어)", "809M",
-              "다국어 정확도·속도 균형. 문장부호를 자주 생략", 1.6, recommended=True),
+              "다국어 정확도·속도 균형. 문장부호를 자주 생략", 1.6, 2.3, "빠름", recommended=True),
     ModelInfo("large-v3", "multilingual", "Large v3 (다국어)", "1550M",
-              "최고 정확도. 가장 무겁고 느림", 3.1),
+              "최고 정확도. 가장 무겁고 느림", 3.1, 4.0, "느림"),
 ]
 _BY_ID = {m.id: m for m in CATALOG}
-
-
-def load_stats():
-    """Attach measured VRAM/speed (tools/measure_models.py output) to the catalog."""
-    try:
-        with open(paths.MODEL_STATS_PATH, encoding="utf-8") as f:
-            stats = json.load(f)
-    except (OSError, ValueError):
-        return {}
-    for m in CATALOG:
-        fp16 = stats.get("models", {}).get(m.id, {}).get("float16", {})
-        m.vram_mb = fp16.get("vram_mb")
-        m.rtf = fp16.get("rtf")
-    return stats
 
 
 def model_info(model_id):
@@ -185,6 +170,7 @@ class SttResult:
     latency: float = 0.0
     audio_sec: float = 0.0
     rejected: list = field(default_factory=list)  # low-confidence segment texts
+    via: str = ""                          # "fallback": the local stand-in handled it during a Groq limit
 
 
 # ---------------- cloud speech recognition (Groq) ----------------
@@ -194,6 +180,62 @@ CLOUD_MODELS = {
     "whisper-large-v3": "정확도 우선 (추천)",
     "whisper-large-v3-turbo": "조금 더 빠름, 문장부호를 자주 빼먹음",
 }
+CLOUD_FREE_RPM = 20       # Groq free plan, counted per account (every key of the account shares it)
+FALLBACK_IDLE_SEC = 300   # unload the local stand-in once Groq has worked this long without it
+LIMIT_LABELS = {"minute": "분당 요청 한도", "hour": "시간당 음성 길이 한도", "day": "일일 한도"}
+
+
+def fmt_wait(sec):
+    sec = max(0, int(round(sec)))
+    if sec < 60:
+        return f"{sec}초"
+    if sec < 3600:
+        return f"{(sec + 59) // 60}분"
+    return f"약 {(sec + 1800) // 3600}시간"
+
+
+class RequestPacer:
+    """Token bucket that keeps cloud requests under a requests-per-minute limit.
+
+    ``burst`` requests may go out back to back, then one every 60/(rpm-burst) s.
+    burst + refill*60 == rpm, so no 60-second window holds more than rpm requests
+    whatever pattern the speech comes in. A busy stretch therefore costs a few
+    seconds of delay instead of hitting the limit and losing up to a minute of speech.
+    Utterances are not merged across speakers: Whisper detects one language per
+    request, and a merged English + Korean clip came back entirely in Korean.
+    """
+
+    def __init__(self, rpm=CLOUD_FREE_RPM, clock=time.monotonic):
+        self.rpm = max(5, int(rpm))
+        self.burst = max(1, self.rpm * 3 // 10)   # 20 rpm -> 6 at once, then one per ~4.3 s
+        self.rate = (self.rpm - self.burst) / 60.0
+        self.clock = clock
+        self._tokens = float(self.burst)
+        self._t = clock()
+
+    def _refill(self):
+        now = self.clock()
+        self._tokens = min(float(self.burst), self._tokens + (now - self._t) * self.rate)
+        self._t = now
+
+    def wait_time(self):
+        self._refill()
+        return 0.0 if self._tokens >= 1 else (1 - self._tokens) / self.rate
+
+    def record(self):
+        self._refill()
+        self._tokens -= 1
+
+
+def _limit_kind(message, wait):
+    """Which Groq limit a 429 hit: 'minute', 'hour' (audio seconds) or 'day'."""
+    text = (message or "").lower()
+    for words, kind in (("per day", "day"), ("per hour", "hour"), ("per minute", "minute")):
+        if words in text:
+            return kind
+    return "minute" if wait <= 120 else "hour" if wait <= 3600 else "day"
+
+
 _WHISPER_LANG_NAMES = {
     "english": "en", "korean": "ko", "german": "de", "french": "fr", "spanish": "es", "russian": "ru",
     "polish": "pl", "portuguese": "pt", "italian": "it", "dutch": "nl", "swedish": "sv",
@@ -210,9 +252,10 @@ class CloudAuthError(CloudError):
 
 
 class CloudQuotaError(CloudError):
-    def __init__(self, message, retry_after):
+    def __init__(self, message, retry_after, kind="minute"):
         super().__init__(message)
         self.retry_after = retry_after
+        self.kind = kind
 
 
 class CloudTransientError(CloudError):
@@ -310,7 +353,12 @@ class GroqStt:
             raise CloudAuthError("Groq API 키가 올바르지 않습니다")
         if r.status_code == 429:
             wait = _retry_after(r)
-            raise CloudQuotaError(f"Groq 무료 한도에 도달했습니다 ({int(wait)}초 후 재개)", wait)
+            try:
+                message = (r.json().get("error") or {}).get("message", "")
+            except ValueError:
+                message = r.text
+            kind = _limit_kind(message, wait)
+            raise CloudQuotaError(f"Groq {LIMIT_LABELS[kind]}에 도달했습니다 ({fmt_wait(wait)} 후 재개)", wait, kind)
         raise CloudTransientError(f"Groq 응답 오류 HTTP {r.status_code}: {r.text[:120]}")
 
 
@@ -342,8 +390,15 @@ class SttEngine:
         self.gate_state = "off"   # off (not needed) | loading | on | failed | cpu
         self._gate_done = threading.Event()
         self._gen = 0             # bumped on every load; stale detector threads drop their result
-        self._notice = self._changed = None
+        self._notice = self._changed = self._progress = None
         self._cloud_paused_until = 0.0
+        self.pacer = RequestPacer()
+        self.limit = None          # (kind, until) of the Groq limit last hit
+        # Local stand-in used while Groq is over a limit (opt-in, cloud engine only).
+        self._fb = None
+        self._fb_state = "off"     # off (not configured) | idle | loading | ready | failed
+        self._fb_preload = False
+        self._fb_used = 0.0
         self._lock = threading.Lock()
 
     @property
@@ -353,6 +408,12 @@ class SttEngine:
     def describe(self):
         if self.cloud is not None:
             left = f" · 오늘 남은 요청 {self.cloud.remaining:,}" if self.cloud.remaining is not None else ""
+            limit = self.limit_state()
+            if limit:
+                kind, _, fb = limit
+                doing = {"ready": "내 PC로 대신 인식 중", "idle": "대신 쓸 모델 준비 중",
+                         "loading": "대신 쓸 모델 준비 중"}.get(fb, "인식 멈춤")
+                left = f" · {LIMIT_LABELS[kind]} 도달 · {doing}"
             return f"Groq {self.cloud.model} · 클라우드{left}"
         if not self.model:
             return "로드 안 됨"
@@ -370,7 +431,7 @@ class SttEngine:
         notice(msg) and changed() are called later from the detector thread
         (detector failed / detector state changed).
         """
-        self._notice, self._changed = notice, changed
+        self._notice, self._changed, self._progress = notice, changed, progress
         if cfg.get("engine") == "cloud":
             return self._load_cloud(cfg)
         from faster_whisper import WhisperModel
@@ -400,6 +461,7 @@ class SttEngine:
                 self._gen += 1
                 gen = self._gen
                 self.model, self.gate, self.cloud = model, None, None
+                self._fb, self._fb_state, self.limit = None, "off", None
                 self.model_id, self.device, self.compute_type = model_id, device, compute
                 self.cfg = dict(cfg)
                 self.gate_state = ("loading" if device == "cuda" else "cpu") if wants_gate else "off"
@@ -455,37 +517,142 @@ class SttEngine:
             client.check()
         except CloudError as e:
             raise RuntimeError(str(e)) from e
+        fallback = cloud_cfg.get("fallback_model") or ""
         with self._lock:
             self._gen += 1  # a detector still loading for a previous local model is dropped
+            gen = self._gen
             self.model = self.gate = None  # frees any local model's VRAM
             self.gate_state = "off"
             self._gate_done.set()
             self.cloud = client
             self.model_id, self.device, self.compute_type = client.model, "cloud", ""
             self._cloud_paused_until = 0.0
+            self.pacer = RequestPacer(cloud_cfg.get("rpm") or CLOUD_FREE_RPM)
+            self.limit = None
+            self._fb = None
+            self._fb_state = "idle" if fallback in _BY_ID else "off"
+            self._fb_preload = bool(cloud_cfg.get("fallback_preload")) and self._fb_state == "idle"
+            if self._fb_preload:
+                self._fb_state = "loading"
             self.cfg = dict(cfg)
+        if self._fb_state != "off":
+            # Download now so the first limit doesn't wait for a 1.5 GB model; load now only if asked to.
+            threading.Thread(target=self._prepare_fallback, args=(gen, self._fb_preload),
+                             name="stt-fallback", daemon=True).start()
         log.info("STT ready: %s", self.describe())
         return []
 
+    # ---------- local stand-in while Groq is over a limit ----------
+    def _fallback_cfg(self, cfg):
+        model_id = (cfg.get("cloud") or {}).get("fallback_model")
+        out = {k: cfg[k] for k in ("language", "auto_languages", "skip_korean", "beam_size", "use_context")
+               if k in cfg}
+        out.update(engine="local", model=model_id, device=cfg.get("device", "auto"))
+        if _BY_ID[model_id].kind == "english":
+            out["mode"] = "english"
+        elif cfg.get("mode") in ("fixed", "auto"):
+            out["mode"] = cfg["mode"]
+        else:  # English mode with a multilingual stand-in: fixed English, still checking for Korean
+            out.update(mode="fixed", language="en")
+        return out
+
+    def _prepare_fallback(self, gen, load):
+        try:
+            download(self._fallback_cfg(self.cfg)["model"], self._progress)
+        except Exception as e:
+            log.warning("Fallback model download failed: %s", e)  # retried when it is needed
+        if load:
+            self._load_fallback(gen)
+
+    def _load_fallback(self, gen):
+        sub = SttEngine()
+        try:
+            warnings = sub.load(self._fallback_cfg(self.cfg), progress=self._progress, notice=self._notice)
+        except Exception as e:
+            log.warning("Fallback model unavailable: %s", e)
+            with self._lock:
+                if gen != self._gen:
+                    return
+                self._fb_state = "failed"
+                notice, changed = self._notice, self._changed
+            if notice:
+                notice(f"Groq 한도 동안 쓸 내 PC 모델을 불러오지 못했습니다. ({e})")
+            if changed:
+                changed()
+            return
+        with self._lock:
+            if gen != self._gen:
+                return  # the engine was reloaded meanwhile; dropping sub frees its VRAM
+            self._fb, self._fb_state, self._fb_used = sub, "ready", time.monotonic()
+            notice, changed = self._notice, self._changed
+        log.info("Fallback ready: %s", sub.describe())
+        for w in warnings:
+            if notice:
+                notice(w)
+        if changed:
+            changed()
+
+    def _unload_idle_fallback(self):
+        with self._lock:
+            if self._fb is None or self._fb_preload or time.monotonic() - self._fb_used < FALLBACK_IDLE_SEC:
+                return
+            self._fb, self._fb_state = None, "idle"
+            notice, changed = self._notice, self._changed
+        log.info("Fallback unloaded")
+        if notice:
+            notice("Groq가 다시 정상이라 대신 쓰던 내 PC 모델을 내리고 VRAM을 비웠습니다")
+        if changed:
+            changed()
+
+    def limit_state(self):
+        """(kind, until, fallback state) while a Groq limit is in force, else None."""
+        with self._lock:
+            if self.cloud is None or self.limit is None or self.limit[1] <= time.monotonic():
+                return None
+            return self.limit[0], self.limit[1], self._fb_state
+
+    def cloud_wait(self):
+        """Seconds until the next cloud request may go out (0 for local engines and while limited)."""
+        with self._lock:
+            if self.cloud is None or self._cloud_paused_until > time.monotonic():
+                return 0.0
+            return self.pacer.wait_time()
+
+    def _while_limited(self, audio, prev_text, reason, note):
+        with self._lock:
+            fb, state, gen = self._fb, self._fb_state, self._gen
+            if state == "idle":
+                self._fb_state = "loading"
+        if state == "idle":
+            threading.Thread(target=self._load_fallback, args=(gen,), name="stt-fallback", daemon=True).start()
+        if fb is None:
+            if state in ("idle", "loading"):
+                note += " · 대신 쓸 내 PC 모델 준비 중"
+            return SttResult(audio_sec=len(audio) / 16000, language="", skipped=reason, skip_note=note)
+        self._fb_used = time.monotonic()
+        r = fb.transcribe(audio, prev_text)
+        r.via = "fallback"
+        return r
+
     def _transcribe_cloud(self, cloud, audio, prev_text, cfg):
         t0 = time.perf_counter()
-        result = SttResult(audio_sec=len(audio) / 16000, language="")
         wait = self._cloud_paused_until - time.monotonic()
         if wait > 0:
-            result.skipped, result.skip_note = "cloud_paused", f"Groq 한도 대기 중 ({int(wait)}초 남음)"
-            return result
+            return self._while_limited(audio, prev_text, "cloud_paused", f"Groq 한도 대기 중 ({fmt_wait(wait)} 남음)")
+        result = SttResult(audio_sec=len(audio) / 16000, language="")
         # Groq picks the language itself; Korean is judged from the transcript's script.
-        language = None
         prompt = prev_text[-200:] if cfg.get("use_context", True) and prev_text else None
+        self.pacer.record()
         try:
-            reply = cloud.transcribe(_normalize(audio), language, prompt)
+            reply = cloud.transcribe(_normalize(audio), None, prompt)
         except CloudQuotaError as e:
             self._cloud_paused_until = time.monotonic() + e.retry_after
-            result.skipped, result.skip_note = "cloud_quota", str(e)
-            return result
+            self.limit = (e.kind, self._cloud_paused_until)
+            return self._while_limited(audio, prev_text, "cloud_quota", str(e))
         except CloudTransientError as e:
             result.skipped, result.skip_note = "cloud_error", str(e)
             return result
+        self._unload_idle_fallback()
         texts, logprobs, nospeech = [], [], []
         for s in reply.get("segments") or []:
             txt = (s.get("text") or "").strip()
@@ -501,7 +668,7 @@ class SttEngine:
         if cfg.get("skip_korean", True) and text and hangul_ratio(text) >= 0.5:
             return self._skipped(result, 1.0, t0)
         result.text = text
-        result.language = language or _WHISPER_LANG_NAMES.get((reply.get("language") or "").lower(), "")
+        result.language = _WHISPER_LANG_NAMES.get((reply.get("language") or "").lower(), "")
         if hangul_ratio(text) < 0.5 and result.language == "ko":
             result.language = "en"  # English transcript mislabelled as Korean (accented speech)
         if prompt and text and text.lower() in prompt.lower():

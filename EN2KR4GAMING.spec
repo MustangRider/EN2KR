@@ -22,7 +22,6 @@ binaries += collect_dynamic_libs("ctranslate2")
 
 datas = [
     ("models/silero_vad/silero_vad.onnx", "models/silero_vad"),
-    ("en2kr/model_stats.json", "en2kr"),
 ]
 datas += collect_data_files("faster_whisper")
 icon = None

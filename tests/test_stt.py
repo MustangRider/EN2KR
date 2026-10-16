@@ -32,12 +32,9 @@ def test_resolve_auto_model():
     assert stt.resolve_model_id({"model": "small", "mode": "auto"}, cuda=True) == "small"
 
 
-def test_catalog_stats_loaded():
-    stt.load_stats()
-    m = stt.model_info("distil-large-v3.5")
-    if m.vram_mb is None:
-        pytest.skip("no model_stats.json")
-    assert m.vram_mb > 0 and m.rtf > 0
+def test_catalog_shows_approximate_vram_and_speed():
+    for m in stt.CATALOG:
+        assert m.download_gb < m.vram_gb < 5 and m.speed
 
 
 def _wav(name):

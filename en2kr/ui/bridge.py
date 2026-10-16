@@ -13,13 +13,14 @@ class PipelineBridge(QtCore.QObject):
     notice = QtCore.Signal(str)
     download = QtCore.Signal(object, object)
     auto_ban = QtCore.Signal(str)
+    limit = QtCore.Signal(str, float)
 
     def events(self):
         # Signal.emit from another thread is delivered via a queued connection.
         return PipelineEvents(
             status=self.status.emit, level=self.level.emit, speech=self.speech.emit,
             stt=self.stt.emit, translation=self.translation.emit, notice=self.notice.emit,
-            download=self.download.emit, auto_ban=self.auto_ban.emit)
+            download=self.download.emit, auto_ban=self.auto_ban.emit, limit=self.limit.emit)
 
 
 class Worker(QtCore.QObject):

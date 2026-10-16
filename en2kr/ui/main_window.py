@@ -9,13 +9,15 @@ from .. import APP_NAME, __version__, gpu, paths
 from ..audio import device as audio_device
 from ..audio import sessions
 from ..pipeline import Pipeline
+from ..settings import DEFAULT_EDIT_KEY
 from .api_dialog import ApiDialog
 from .bridge import PipelineBridge, Worker
 from .engine_dialog import EngineDialog
-from .hotkeys import Hotkeys
+from .hotkeys import Hotkeys, key_label
 from .onboarding import OnboardingDialog
 from .overlay import OverlayWindow
 from .settings_dialog import SettingsDialog
+from .text_view import text_view
 from .theme import STATE_COLORS
 
 log = logging.getLogger(__name__)
@@ -42,11 +44,7 @@ class HelpDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle(title)
         lay = QtWidgets.QVBoxLayout(self)
-        lab = QtWidgets.QLabel(html_text)
-        lab.setTextFormat(QtCore.Qt.TextFormat.RichText)
-        lab.setWordWrap(True)
-        lab.setMinimumWidth(380)
-        lay.addWidget(lab)
+        lay.addWidget(text_view(html_text), 1)
         ok = QtWidgets.QPushButton("확인")
         ok.setObjectName("primary")
         ok.clicked.connect(self.accept)
@@ -54,7 +52,7 @@ class HelpDialog(QtWidgets.QDialog):
         row.addStretch()
         row.addWidget(ok)
         lay.addLayout(row)
-        lay.setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetFixedSize)
+        self.resize(480, 300)
 
 
 class SourceCombo(QtWidgets.QComboBox):
@@ -143,7 +141,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bridge = PipelineBridge()
         self.pipeline = Pipeline(settings, self.bridge.events())
         self.overlay = OverlayWindow(settings)
-        self.hotkeys = Hotkeys(settings.get("hotkeys.edit_mode", "f12"))
+        self.hotkeys = Hotkeys(settings.get("hotkeys.edit_mode", DEFAULT_EDIT_KEY))
         self.cuda = gpu.cuda_device_count() > 0
         self._lat = {"stt": None, "tr": None}
         self._save_timer = QtCore.QTimer(self, singleShot=True, interval=800, timeout=self.settings.save)
@@ -238,20 +236,21 @@ class MainWindow(QtWidgets.QMainWindow):
             b.clicked.connect(slot)
             btns.addWidget(b)
         btns.addStretch()
-        edit_tip = QtWidgets.QLabel(f"{self.settings.get('hotkeys.edit_mode', 'f12').upper()}: 오버레이 편집 모드")
+        edit_tip = QtWidgets.QLabel(f"{key_label(self.settings.get('hotkeys.edit_mode', DEFAULT_EDIT_KEY))}: 오버레이 편집 모드")
         edit_tip.setStyleSheet("color:#f2cc60; font-weight:bold;")
         self.edit_tip = edit_tip
         btns.addWidget(edit_tip)
         ll.addLayout(btns)
         split.addWidget(left)
 
-        tabs = QtWidgets.QTabWidget()
+        tabs = self.tabs = QtWidgets.QTabWidget()
         self.glossary = TermEditor(self.settings, "glossary", ["영어", "한국어(고정 번역)"], ("영어 단어/구", "한국어"))
-        self.slang = TermEditor(self.settings, "slang", ["슬랭", "풀어쓴 영어"], ("예: gg", "예: good game"))
-        tabs.addTab(self._wrap(self.glossary, "게임 고유명사를 항상 지정한 한국어로 번역합니다. 대소문자·복수형(s)은 자동 처리됩니다."),
-                    "고유명사")
-        tabs.addTab(self._wrap(self.slang, "말로 하는 게임 은어(예: nade → grenade)를 번역 전에 풀어 써서 오역을 줄입니다."),
-                    "슬랭")
+        self.slang = TermEditor(self.settings, "slang", ["슬랭", "풀어쓴 영어"], ("예: nade", "예: grenade"))
+        self._term_tabs = {}
+        self._add_term_tab(self.glossary, "고유명사", "translate.use_glossary", "고유명사 고정 번역 사용",
+                           "게임 고유명사를 항상 지정한 한국어로 번역합니다. 대소문자·복수형(s)은 자동 처리됩니다.")
+        self._add_term_tab(self.slang, "슬랭", "translate.use_slang", "슬랭 풀어쓰기 사용",
+                           "말로 하는 게임 은어(예: nade → grenade)를 번역 전에 풀어 써서 오역을 줄입니다.")
         tabs.addTab(self._build_hallucination_tab(), "환청 차단")
         split.addWidget(tabs)
         split.setSizes([700, 460])
@@ -268,16 +267,34 @@ class MainWindow(QtWidgets.QMainWindow):
         sb.addPermanentWidget(self.usage_label)
         self._populate_sources()
 
-    @staticmethod
-    def _wrap(widget, note):
+    def _add_term_tab(self, editor, title, key, toggle_text, note):
         w = QtWidgets.QWidget()
         l = QtWidgets.QVBoxLayout(w)
+        on = QtWidgets.QCheckBox(toggle_text)
+        on.setChecked(bool(self.settings.get(key, True)))
+        on.toggled.connect(lambda checked: self._toggle_terms(key, checked))
+        l.addWidget(on)
         lab = QtWidgets.QLabel(note)
         lab.setObjectName("muted")
         lab.setWordWrap(True)
         l.addWidget(lab)
-        l.addWidget(widget, 1)
-        return w
+        l.addWidget(editor, 1)
+        index = self.tabs.addTab(w, title)
+        self._term_tabs[key] = (index, title, editor, toggle_text)
+        self._show_term_state(key)
+
+    def _show_term_state(self, key):
+        index, title, editor, _ = self._term_tabs[key]
+        on = bool(self.settings.get(key, True))
+        self.tabs.setTabText(index, title if on else f"{title} (꺼짐)")
+        editor.table.setEnabled(on)
+
+    def _toggle_terms(self, key, on):
+        self.settings.set(key, on)
+        self.settings.save()
+        self._show_term_state(key)
+        self.pipeline.apply_translation()
+        self._log_html(f"<span style='color:#58a6ff'>{self._term_tabs[key][3]}: {'켬' if on else '끔'}</span>")
 
     def _build_hallucination_tab(self):
         w = QtWidgets.QWidget()
@@ -329,6 +346,7 @@ class MainWindow(QtWidgets.QMainWindow):
         b.notice.connect(self._on_notice)
         b.download.connect(self._on_download)
         b.auto_ban.connect(self._on_auto_ban)
+        b.limit.connect(self.overlay.show_banner)
         self.source.activated.connect(self._source_chosen)
         self.source.about_to_show.connect(self._populate_sources)
         self.hotkeys.edit_toggled.connect(self._toggle_edit)
@@ -354,6 +372,10 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "설정 파일 오류", s.load_error)
         if s.migrated_from:
             self._log_html(f"<span style='color:#58a6ff'>이전 버전 설정을 가져왔습니다: {html.escape(s.migrated_from)}</span>")
+        for note in s.notes:
+            self._log_html(f"<span style='color:#58a6ff'>{html.escape(note)}</span>")
+        if s.notes:
+            s.save()
         if not s.get("ui.onboarding_done"):
             self.open_onboarding()
             s.set("ui.onboarding_done", True)
@@ -468,8 +490,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._log_html(f"<span style='color:#6e7681'>[건너뜀 · {html.escape(line.note)}] {text}</span>")
             return
         self._ema("stt", line.latency)
+        via = " <span style='color:#d29922'>[내 PC 대신]</span>" if line.via == "fallback" else ""
         self._log_html(f"<span style='color:#8b949e'>{QtCore.QTime.currentTime().toString('HH:mm:ss')}</span> "
-                       f"<span style='color:#58a6ff'>[{line.language}]</span> "
+                       f"<span style='color:#58a6ff'>[{line.language}]</span>{via} "
                        f"<span style='color:#3fb950'>{html.escape(line.text)}</span>")
         self.overlay.upsert_source(line.line_id, line.text, line.language)
 
@@ -608,20 +631,23 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "번역 API", "키(또는 모델)가 비어 있어 사용하지 않는 API: " + ", ".join(missing))
 
     def open_settings(self):
-        old_key = self.settings.get("hotkeys.edit_mode", "f12")
+        old_key = self.settings.get("hotkeys.edit_mode", DEFAULT_EDIT_KEY)
         dlg = SettingsDialog(self.settings, self)
         if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         dlg.apply()
         self.overlay.apply_settings()
         self.pipeline.apply_logging()
-        new_key = self.settings.get("hotkeys.edit_mode", "f12")
+        new_key = self.settings.get("hotkeys.edit_mode", DEFAULT_EDIT_KEY)
         if new_key != old_key:
             self.hotkeys.set_edit_key(new_key)
-            self.edit_tip.setText(f"{new_key.upper()}: 오버레이 편집 모드")
+            self.edit_tip.setText(f"{key_label(new_key)}: 오버레이 편집 모드")
+            if self.hotkeys.error:
+                self._log_html(f"<span style='color:#f0a020'>단축키 '{html.escape(new_key)}'를 등록하지 못했습니다: "
+                               f"{html.escape(str(self.hotkeys.error))}</span>")
 
     def open_onboarding(self):
-        dlg = OnboardingDialog(self.settings.get("hotkeys.edit_mode", "f12"), self)
+        dlg = OnboardingDialog(self.settings.get("hotkeys.edit_mode", DEFAULT_EDIT_KEY), self)
         dlg.open_api.connect(self.open_api)
         dlg.open_engine.connect(self.open_engine)
         dlg.exec()

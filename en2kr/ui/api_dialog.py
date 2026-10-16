@@ -62,9 +62,6 @@ class ApiDialog(QtWidgets.QDialog):
         body.addWidget(self.stack, 1)
         layout.addLayout(body, 1)
 
-        self.slang = QtWidgets.QCheckBox("게임 은어 풀어쓰기 사용 (nade → grenade 등, 메인 창 '슬랭' 탭에서 편집)")
-        self.slang.setChecked(tr.get("use_slang", True))
-        layout.addWidget(self.slang)
         btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Save
                                           | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
         btns.button(QtWidgets.QDialogButtonBox.StandardButton.Save).setText("저장")
@@ -229,7 +226,6 @@ class ApiDialog(QtWidgets.QDialog):
             if it.checkState() == QtCore.Qt.CheckState.Checked:
                 order.append(pid)
         self.settings.set("translate.order", order)
-        self.settings.set("translate.use_slang", self.slang.isChecked())
         self.settings.save()
         unconfigured = [P.PROVIDERS[p].label for p in order if not P.create(p, self._form_cfg(p)).configured]
         return unconfigured

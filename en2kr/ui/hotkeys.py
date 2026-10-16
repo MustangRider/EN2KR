@@ -14,12 +14,18 @@ from PySide6 import QtCore
 log = logging.getLogger(__name__)
 
 
+def key_label(key):
+    """'ctrl+alt+o' -> 'Ctrl+Alt+O', 'f12' -> 'F12'."""
+    return "+".join(part.strip().title() if len(part.strip()) > 1 else part.strip().upper()
+                    for part in (key or "").split("+"))
+
+
 class Hotkeys(QtCore.QObject):
     edit_toggled = QtCore.Signal()
     font_up = QtCore.Signal()
     font_down = QtCore.Signal()
 
-    def __init__(self, edit_key="f12"):
+    def __init__(self, edit_key="ctrl+alt+o"):
         super().__init__()
         self.edit_key = edit_key
         self._edit_handle = None
@@ -27,6 +33,7 @@ class Hotkeys(QtCore.QObject):
         self.error = None
 
     def start(self):
+        self.error = None
         try:
             import keyboard
             self._edit_handle = keyboard.add_hotkey(self.edit_key, self.edit_toggled.emit)

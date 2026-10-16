@@ -66,6 +66,9 @@ _OLD_DEFAULT_SLANG = {
     "np": "no problem", "ty": "thank you", "thx": "thanks", "pls": "please", "plz": "please",
 }
 
+# F12, the v2.0-2.2.1 default, is also Steam's screenshot key. Games rarely bind Ctrl+Alt combinations.
+DEFAULT_EDIT_KEY = "ctrl+alt+o"
+
 OPENAI_PRESETS = {
     "gemini": {"label": "Google Gemini", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai"},
     "groq": {"label": "Groq", "base_url": "https://api.groq.com/openai/v1"},
@@ -75,7 +78,7 @@ OPENAI_PRESETS = {
 }
 
 DEFAULTS = {
-    "version": 2,
+    "version": 3,
     # mode: "process" (one program's audio) or "device" (any input device, advanced)
     "audio": {"mode": "process", "process_name": "", "device_name": ""},
     "vad": {"threshold": 0.3, "silence_sec": 0.5, "preroll_sec": 0.3,
@@ -85,7 +88,9 @@ DEFAULTS = {
             "auto_languages": ["en", "ko", "de", "fr", "es", "ru", "pl"],
             "skip_korean": True, "device": "auto", "beam_size": 5,
             "use_context": True,
-            "cloud": {"provider": "groq", "model": "whisper-large-v3", "key": ""}},
+            "cloud": {"provider": "groq", "model": "whisper-large-v3", "key": "", "rpm": 20,
+                      # local model used while Groq is over a limit ("" = wait instead)
+                      "fallback_model": "", "fallback_preload": False}},
     "translate": {
         "order": [],
         "providers": {
@@ -96,6 +101,7 @@ DEFAULTS = {
                        "model": "", "key": ""},
         },
         "cache_size": 500,
+        "use_glossary": True,
         "use_slang": True,
     },
     "glossary": DEFAULT_GLOSSARY,
@@ -104,7 +110,7 @@ DEFAULTS = {
     "overlay": {"x": 100, "y": 100, "w": 800, "h": 250, "font_family": "Malgun Gothic",
                 "font_size": 18, "line_spacing": 12, "max_lines": 5, "show_original": True,
                 "fade_sec": 0, "bg_opacity": 0},
-    "hotkeys": {"edit_mode": "f12"},
+    "hotkeys": {"edit_mode": DEFAULT_EDIT_KEY},
     "logging": {"save_transcripts": True, "retention_days": 14},
     "ui": {"cpu_warning_dismissed": False, "onboarding_done": False},
 }
@@ -128,6 +134,16 @@ def _drop_voicechat(audio):
     audio.pop("voice", None)
     if audio.get("mode") == "voicechat":
         audio["mode"] = "process"
+
+
+def _upgrade_to_3(data, notes):
+    """v2.2.2: move the edit-mode hotkey off F12 (Steam screenshots)."""
+    hotkeys = data.setdefault("hotkeys", {})
+    if str(hotkeys.get("edit_mode", "")).strip().lower() == "f12":
+        hotkeys["edit_mode"] = DEFAULT_EDIT_KEY
+        notes.append("오버레이 편집 모드 단축키를 F12에서 Ctrl+Alt+O로 바꿨습니다 (F12는 스팀 스크린샷 키와 겹칩니다). "
+                     "'오버레이·단축키·기록'에서 다른 키로 바꿀 수 있습니다.")
+    data["version"] = 3
 
 
 def _map_secrets(data, fn):
@@ -175,6 +191,7 @@ class Settings:
         self._data = copy.deepcopy(DEFAULTS)
         self.load_error = None      # message shown to the user if the file was unreadable
         self.migrated_from = None   # v1 file path if migrated this run
+        self.notes = []             # one-time messages about settings changed by an upgrade
 
     # ---------- load / save ----------
     def load(self):
@@ -190,6 +207,8 @@ class Settings:
                         self._data["slang"] = dict(DEFAULT_SLANG)
                     if isinstance(self._data.get("audio"), dict):
                         _drop_voicechat(self._data["audio"])
+                    if int(self._data.get("version") or 2) < 3:
+                        _upgrade_to_3(self._data, self.notes)
                     return self
                 except (OSError, ValueError) as e:
                     backup = f"{self.path}.corrupt-{time.strftime('%Y%m%d-%H%M%S')}"

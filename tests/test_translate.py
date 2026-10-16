@@ -146,3 +146,13 @@ def test_superseded_line_translated_once():
 @pytest.mark.parametrize("pid", list(P.PROVIDERS))
 def test_providers_report_unconfigured(pid):
     assert P.create(pid, {}).configured is False
+
+
+def test_glossary_can_be_switched_off():
+    b = FakeProvider("B", lambda t: t)
+    svc = TranslationService(on_result=lambda r: None)
+    svc.configure({"translate": {"order": [], "use_glossary": False, "use_slang": False},
+                   "glossary": {"raider": "레이더"}, "slang": {"nade": "grenade"}})
+    svc._providers = [b]
+    assert svc.translate_now("nade the raider").text == "nade the raider"
+    assert b.calls == ["nade the raider"]

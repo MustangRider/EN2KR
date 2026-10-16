@@ -4,6 +4,7 @@ Every worker loop catches its own exceptions and reports them through
 ``events.status`` instead of dying silently (v1 threads died on the first
 error and the app kept showing a VAD lamp with no translations).
 """
+import collections
 import logging
 import queue
 import threading
@@ -16,7 +17,7 @@ import numpy as np
 from . import paths
 from .audio import SAMPLE_RATE
 from .filters import HallucinationFilter
-from .stt import SttEngine
+from .stt import LIMIT_LABELS, SttEngine, fmt_wait
 from .transcripts import TranscriptLog
 from .translate.service import Job, TranslationService
 from .vad import Segmenter, SileroVad
@@ -29,6 +30,9 @@ MAX_HOLD_SEC = 6.0       # never hold a fragment's translation longer than this
 MAX_LINE_CHARS = 220
 CONTEXT_GAP_SEC = 4.0    # previous text is used as Whisper context if this close
 STALL_FLUSH_SEC = 1.0    # close an utterance if audio stops arriving
+MAX_BACKLOG_SEC = 10.0   # Groq pacing: a subtitle later than this is useless, drop it
+MAX_JOIN_SEC = 28.0      # Groq pacing: a joined request stays inside one 30 s Whisper window
+JOIN_GAP_SEC = 0.8       # Groq pacing: a fragment this close is the same speaker going on
 
 
 def _noop(*args, **kwargs):
@@ -45,6 +49,7 @@ class PipelineEvents:
     notice: Callable = _noop        # (message)
     download: Callable = _noop      # (done_bytes, total_bytes)
     auto_ban: Callable = _noop      # (text)
+    limit: Callable = _noop         # (message, seconds_left) Groq limit hit; ("", 0) once it is over
 
 
 @dataclass
@@ -57,6 +62,7 @@ class SttLine:
     note: Optional[str] = None  # why it was dropped, if it was
     latency: float = 0.0
     rejected: list = field(default_factory=list)
+    via: str = ""               # "fallback": recognised by the local stand-in during a Groq limit
 
 
 class Pipeline:
@@ -84,6 +90,8 @@ class Pipeline:
         self._stt_failures = 0
         self._force_cpu = False    # set after repeated GPU failures; not saved to settings
         self._switch_to = None     # PID found playing while the captured one was silent
+        self._limit_shown = None   # Groq limit state last reported to the UI
+        self._backlog = collections.deque()  # utterances waiting for a Groq request slot
         self.segmenter = None
 
     # ---------- lifecycle ----------
@@ -169,8 +177,28 @@ class Pipeline:
     def _report_stt_ready(self):
         if self.engine.device == "cpu":
             self.events.status("stt", "wait", self.engine.describe() + " — CPU 모드(느림)")
+        elif self.engine.limit_state():
+            self.events.status("stt", "wait", self.engine.describe())
         else:
             self.events.status("stt", "ok", self.engine.describe())
+        self._report_limit()
+
+    def _report_limit(self):
+        """Tell the UI (overlay warning) when a Groq limit starts, changes or ends."""
+        state = self.engine.limit_state()
+        if state == self._limit_shown:
+            return
+        self._limit_shown = state
+        if state is None:
+            self.events.limit("", 0.0)
+            return
+        kind, until, fallback = state
+        doing = {"ready": "내 PC 모델로 대신 인식 중", "idle": "대신 쓸 내 PC 모델 준비 중",
+                 "loading": "대신 쓸 내 PC 모델 준비 중"}.get(fallback, "그동안 음성 인식을 멈춥니다")
+        message = f"Groq {LIMIT_LABELS[kind]} 도달 · {doing}"
+        left = until - time.monotonic()
+        self.events.notice(f"{message} ({fmt_wait(left)} 후 재개)")
+        self.events.limit(message, left)
 
     def _report_translate_status(self):
         labels = self.translator.provider_labels
@@ -312,15 +340,21 @@ class Pipeline:
     # ---------- STT ----------
     def _stt_loop(self):
         while self._running:
-            try:
-                audio, info = self._seg_q.get(timeout=0.25)
-            except queue.Empty:
+            item = self._next_segment(0.25)
+            if item is None:
                 self._flush_pending()
+                if self._limit_shown and self._limit_shown[1] <= time.monotonic():
+                    self._report_stt_ready()  # the Groq limit ran out while nobody spoke
                 continue
             if not self.engine.ready:
                 continue
             try:
-                self._handle_segment(audio, info)
+                wait = self.engine.cloud_wait()
+                if wait > 0:
+                    self._wait_for_slot(wait)
+                item = self._join_continuations(item)
+                if item is not None:
+                    self._handle_segment(*item)
                 self._stt_failures = 0
             except Exception as e:
                 self._stt_failures += 1
@@ -331,6 +365,60 @@ class Pipeline:
                     self._force_cpu = True
                     self.reload_stt()
 
+    # ---------- Groq pacing ----------
+    def _next_segment(self, timeout):
+        if self._backlog:
+            return self._backlog.popleft()
+        try:
+            audio, info = self._seg_q.get(timeout=timeout)
+        except queue.Empty:
+            return None
+        info.setdefault("queued", time.monotonic())
+        return audio, info
+
+    def _wait_for_slot(self, wait):
+        """Groq requests are being paced: keep taking utterances meanwhile so none is lost."""
+        self.events.status("stt", "wait", "Groq 분당 한도에 맞춰 순서대로 보내는 중")
+        deadline = time.monotonic() + wait
+        while self._running and time.monotonic() < deadline:
+            try:
+                audio, info = self._seg_q.get(timeout=min(0.25, max(0.01, deadline - time.monotonic())))
+            except queue.Empty:
+                self._flush_pending()
+                continue
+            info.setdefault("queued", time.monotonic())
+            self._backlog.append((audio, info))
+
+    def _join_continuations(self, item):
+        """Drop what waited too long; join the fragments that directly continue this utterance.
+
+        Only fragments as close as JOIN_GAP_SEC (the same speaker going on) share a
+        request: Whisper detects one language per request, so joining different
+        speakers could turn English speech into Korean or the other way round.
+        """
+        now = time.monotonic()
+        dropped = 0
+        while item is not None and now - item[1].get("queued", now) > MAX_BACKLOG_SEC:
+            dropped += 1
+            item = self._backlog.popleft() if self._backlog else None
+        if dropped:
+            self.events.notice(f"Groq 분당 한도 때문에 {MAX_BACKLOG_SEC:.0f}초 넘게 밀린 문장 {dropped}개를 건너뛰었습니다")
+        if item is None or not self._backlog:
+            return item
+        parts, info = [item[0]], dict(item[1])
+        total = len(item[0])
+        while self._backlog:
+            audio, nxt = self._backlog[0]
+            gap = nxt["start_sample"] - info["end_sample"]
+            if gap > JOIN_GAP_SEC * SAMPLE_RATE or total + max(gap, 0) + len(audio) > MAX_JOIN_SEC * SAMPLE_RATE:
+                break
+            self._backlog.popleft()
+            parts += [np.zeros(max(gap, 0), np.float32), audio]
+            total += max(gap, 0) + len(audio)
+            info["end_sample"] = nxt["end_sample"]
+        return (np.concatenate(parts) if len(parts) > 1 else parts[0]), info
+
+    # ---------- results ----------
     def _handle_segment(self, audio, info):
         start = info["start_sample"] / SAMPLE_RATE
         end = info["end_sample"] / SAMPLE_RATE
@@ -338,12 +426,10 @@ class Pipeline:
         context = prev["text"] if prev and start - prev["end"] <= CONTEXT_GAP_SEC else None
         r = self.engine.transcribe(audio, prev_text=context)
         if self.engine.ready and (self._stt_failures or self.engine.device == "cloud"):
-            self._report_stt_ready()  # cloud: refresh the remaining-request count
+            self._report_stt_ready()  # cloud: refresh the remaining-request count and limit state
         if r.skipped in ("cloud_quota", "cloud_paused"):
-            if r.skipped == "cloud_quota":
-                self.events.notice(r.skip_note)
             self.events.status("stt", "wait", r.skip_note)
-        line = SttLine(r.text, r.text, r.language, None, latency=r.latency, rejected=r.rejected)
+        line = SttLine(r.text, r.text, r.language, None, latency=r.latency, rejected=r.rejected, via=r.via)
         if r.skipped == "korean":
             line.note = "한국어 음성 건너뜀"
         elif r.skipped:

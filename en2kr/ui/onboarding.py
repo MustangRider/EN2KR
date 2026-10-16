@@ -1,7 +1,8 @@
 """First-run guide."""
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from .. import CONTACT
+from .hotkeys import key_label
 
 
 def _steps(edit_key):
@@ -17,8 +18,8 @@ def _steps(edit_key):
          "모델마다 VRAM 사용량이 표시됩니다.",
          "engine"),
         ("자막 위치",
-         f"<b>{edit_key.upper()}</b>로 편집 모드에 들어가 자막을 끌어 옮기고, 오른쪽 아래 모서리로 크기를 조절하세요. "
-         f"다시 {edit_key.upper()}를 누르면 마우스 클릭이 게임으로 통과됩니다.",
+         f"<b>{key_label(edit_key)}</b>로 편집 모드에 들어가 자막을 끌어 옮기고, 오른쪽 아래 모서리로 크기를 조절하세요. "
+         f"한 번 더 누르면 마우스 클릭이 게임으로 통과됩니다. 단축키는 '오버레이·단축키·기록'에서 바꿀 수 있습니다.",
          None),
         ("게임 화면 모드",
          "독점 전체 화면에서는 자막이 보이지 않습니다. 게임을 '테두리 없는 창 모드'로 실행하세요.",
@@ -30,11 +31,19 @@ class OnboardingDialog(QtWidgets.QDialog):
     open_api = QtCore.Signal()
     open_engine = QtCore.Signal()
 
-    def __init__(self, edit_key="f12", parent=None):
+    def __init__(self, edit_key="ctrl+alt+o", parent=None):
         super().__init__(parent)
         self.setWindowTitle("시작 안내")
-        self.setFixedWidth(640)  # word-wrapped rich text needs a known width to compute its height
-        layout = QtWidgets.QVBoxLayout(self)
+        outer = QtWidgets.QVBoxLayout(self)
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        content = QtWidgets.QWidget()
+        scroll.setWidget(content)
+        outer.addWidget(scroll, 1)
+        layout = QtWidgets.QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 6, 0)
         layout.setSpacing(10)
         layout.addWidget(QtWidgets.QLabel("<h2>실시간 게임 음성 번역 오버레이</h2>"))
         for i, (head, body, action) in enumerate(_steps(edit_key), 1):
@@ -51,9 +60,16 @@ class OnboardingDialog(QtWidgets.QDialog):
             layout.addWidget(box)
         footer = QtWidgets.QLabel(f"이 안내는 메인 창의 '사용 안내' 버튼으로 다시 볼 수 있습니다.  ·  문의: {CONTACT}")
         footer.setObjectName("muted")
+        footer.setWordWrap(True)
         layout.addWidget(footer)
+        layout.addStretch()
         ok = QtWidgets.QPushButton("시작하기")
         ok.setObjectName("primary")
         ok.clicked.connect(self.accept)
-        layout.addWidget(ok)
-        layout.setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetFixedSize)
+        outer.addWidget(ok)
+        # Resizable: the text re-wraps to the window; a short screen scrolls instead of cutting it off.
+        width = 680
+        need = content.heightForWidth(width - 40) + ok.sizeHint().height() + 40
+        screen = self.screen() or QtGui.QGuiApplication.primaryScreen()
+        limit = screen.availableGeometry().height() - 60 if screen else need
+        self.resize(width, min(need, limit))

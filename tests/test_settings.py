@@ -105,3 +105,28 @@ def test_voicechat_mode_from_v2_1_falls_back_to_process(tmp_path):
     audio = Settings(str(p)).load().section("audio")
     assert audio["mode"] == "process" and audio["process_name"] == "Game.exe"
     assert "voice" not in audio
+
+
+def test_f12_edit_key_moves_off_steam_screenshot_key(tmp_path):
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"version": 2, "hotkeys": {"edit_mode": "f12"}}), encoding="utf-8")
+    s = Settings(str(p)).load()
+    assert s.get("hotkeys.edit_mode") == "ctrl+alt+o" and s.get("version") == 3 and s.notes
+    s.save()
+    again = Settings(str(p)).load()
+    assert again.get("hotkeys.edit_mode") == "ctrl+alt+o" and not again.notes
+
+
+def test_custom_edit_key_is_kept(tmp_path):
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"version": 2, "hotkeys": {"edit_mode": "scroll lock"}}), encoding="utf-8")
+    s = Settings(str(p)).load()
+    assert s.get("hotkeys.edit_mode") == "scroll lock" and not s.notes
+
+
+def test_new_cloud_options_have_defaults(tmp_path):
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"stt": {"engine": "cloud", "cloud": {"model": "whisper-large-v3"}}}), encoding="utf-8")
+    s = Settings(str(p)).load()
+    assert s.get("stt.cloud.rpm") == 20 and s.get("stt.cloud.fallback_model") == ""
+    assert s.get("translate.use_glossary") is True
