@@ -588,7 +588,7 @@ class SttEngine:
         log.info("Fallback ready: %s", sub.describe())
         for w in warnings:
             if notice:
-                notice(w)
+                notice(f"(Groq 한도 동안 쓸 내 PC 모델) {w}")
         if changed:
             changed()
 
