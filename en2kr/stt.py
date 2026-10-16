@@ -392,7 +392,7 @@ class SttEngine:
         self._gen = 0             # bumped on every load; stale detector threads drop their result
         self._notice = self._changed = self._progress = None
         self._cloud_paused_until = 0.0
-        self.pacer = RequestPacer()
+        self.pacer = None          # RequestPacer when the user turned pacing on
         self.limit = None          # (kind, until) of the Groq limit last hit
         # Local stand-in used while Groq is over a limit (opt-in, cloud engine only).
         self._fb = None
@@ -527,7 +527,7 @@ class SttEngine:
             self.cloud = client
             self.model_id, self.device, self.compute_type = client.model, "cloud", ""
             self._cloud_paused_until = 0.0
-            self.pacer = RequestPacer(cloud_cfg.get("rpm") or CLOUD_FREE_RPM)
+            self.pacer = RequestPacer(cloud_cfg.get("rpm") or CLOUD_FREE_RPM) if cloud_cfg.get("pace") else None
             self.limit = None
             self._fb = None
             self._fb_state = "idle" if fallback in _BY_ID else "off"
@@ -614,7 +614,7 @@ class SttEngine:
     def cloud_wait(self):
         """Seconds until the next cloud request may go out (0 for local engines and while limited)."""
         with self._lock:
-            if self.cloud is None or self._cloud_paused_until > time.monotonic():
+            if self.cloud is None or self.pacer is None or self._cloud_paused_until > time.monotonic():
                 return 0.0
             return self.pacer.wait_time()
 
@@ -642,7 +642,9 @@ class SttEngine:
         result = SttResult(audio_sec=len(audio) / 16000, language="")
         # Groq picks the language itself; Korean is judged from the transcript's script.
         prompt = prev_text[-200:] if cfg.get("use_context", True) and prev_text else None
-        self.pacer.record()
+        pacer = self.pacer  # a reload may swap it from another thread
+        if pacer is not None:
+            pacer.record()
         try:
             reply = cloud.transcribe(_normalize(audio), None, prompt)
         except CloudQuotaError as e:

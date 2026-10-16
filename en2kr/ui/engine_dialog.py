@@ -83,13 +83,25 @@ class EngineDialog(QtWidgets.QDialog):
         cf.addRow(test_row)
         cf.addRow(_muted("무료 한도: 하루 2,000회 · 분당 20회 요청 (요청당 최소 10초로 계산). 문장당 약 0.3~0.9초. "
                          "말소리 구간이 Groq 서버로 전송됩니다. 언어는 Groq가 자동으로 판별합니다."))
+        self.cloud_pace = QtWidgets.QCheckBox("분당 한도에 맞춰 늦춰 보내기")
+        self.cloud_pace.setChecked(bool(cloud_cfg.get("pace")))
         self.cloud_rpm = QtWidgets.QSpinBox()
         self.cloud_rpm.setRange(5, 1000)
         self.cloud_rpm.setSuffix(" 회")
         self.cloud_rpm.setValue(int(cloud_cfg.get("rpm") or stt.CLOUD_FREE_RPM))
-        cf.addRow("분당 최대 요청:", self.cloud_rpm)
-        cf.addRow(_muted("무료 플랜은 20회입니다. 말이 몰리면 문장을 순서대로 몇 초씩 늦춰 보내서 한도를 넘지 않게 합니다 (10초 넘게 밀린 문장은 건너뜀). "
-                         "유료 플랜이면 Groq 콘솔의 한도에 맞춰 올리세요."))
+        pace_row = QtWidgets.QHBoxLayout()
+        pace_row.addWidget(self.cloud_pace)
+        pace_row.addSpacing(16)
+        pace_row.addWidget(QtWidgets.QLabel("분당 최대 요청:"))
+        pace_row.addWidget(self.cloud_rpm)
+        pace_row.addStretch()
+        cf.addRow(pace_row)
+        cf.addRow(_muted("켜면 말이 몰릴 때 문장을 순서대로 몇 초씩 늦춰 보내서 분당 한도에 덜 걸립니다 "
+                         "(처음 6개는 바로, 그다음은 약 4초 간격. 10초 넘게 밀린 문장은 건너뜀). 끄면 바로 보내고, "
+                         "한도에 걸리면 그동안 멈추거나 아래 모델로 대신 인식합니다. 무료 플랜은 분당 20회이고, "
+                         "유료 플랜이면 콘솔의 한도에 맞춰 올리세요."))
+        self.cloud_pace.toggled.connect(self.cloud_rpm.setEnabled)
+        self.cloud_rpm.setEnabled(self.cloud_pace.isChecked())
         self.fb_combo = QtWidgets.QComboBox()
         self.fb_combo.addItem("기다리기 (한도가 풀릴 때까지 인식하지 않음)", "")
         for m in stt.CATALOG:
@@ -328,7 +340,8 @@ class EngineDialog(QtWidgets.QDialog):
         cfg = dict(self.cfg)
         cfg["engine"] = "cloud" if self.cloud_rb.isChecked() else "local"
         cfg["cloud"] = {"provider": "groq", "model": self.cloud_model.currentData(),
-                        "key": self.cloud_key.text().strip(), "rpm": self.cloud_rpm.value(),
+                        "key": self.cloud_key.text().strip(), "pace": self.cloud_pace.isChecked(),
+                        "rpm": self.cloud_rpm.value(),
                         "fallback_model": self.fb_combo.currentData() or "",
                         "fallback_preload": self.fb_preload.isChecked()}
         cfg["mode"] = self.mode()

@@ -16,6 +16,7 @@ from .engine_dialog import EngineDialog
 from .hotkeys import Hotkeys, key_label
 from .onboarding import OnboardingDialog
 from .overlay import OverlayWindow
+from .overlay_dialog import OverlayStyleDialog
 from .settings_dialog import SettingsDialog
 from .text_view import text_view
 from .theme import STATE_COLORS
@@ -230,8 +231,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         btns = QtWidgets.QHBoxLayout()
         for text, slot in (("인식 엔진", self.open_engine), ("번역 API", self.open_api),
-                           ("오버레이·단축키·기록", self.open_settings), ("사용 안내", self.open_onboarding),
-                           ("기록 폴더 열기", lambda: os.startfile(paths.app_dir()))):
+                           ("오버레이 꾸미기", self.open_overlay_style), ("단축키·기록", self.open_settings),
+                           ("사용 안내", self.open_onboarding), ("기록 폴더 열기", lambda: os.startfile(paths.app_dir()))):
             b = QtWidgets.QPushButton(text)
             b.clicked.connect(slot)
             btns.addWidget(b)
@@ -352,6 +353,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.hotkeys.edit_toggled.connect(self._toggle_edit)
         self.hotkeys.font_up.connect(lambda: self.overlay.change_font(2))
         self.hotkeys.font_down.connect(lambda: self.overlay.change_font(-2))
+        self.overlay.edit_done.connect(self._toggle_edit)
+        self.overlay.customize_requested.connect(self.open_overlay_style)
         self.glossary.changed.connect(self.pipeline.apply_translation)
         self.slang.changed.connect(self.pipeline.apply_translation)
         self._usage_timer = QtCore.QTimer(self, interval=300_000, timeout=self._refresh_usage)
@@ -561,6 +564,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._save_timer.start()
 
     def _toggle_edit(self):
+        if self.overlay.previewing and not self.overlay.edit_mode:
+            return  # the customise window is open (modal): edit mode could not be left again
         active = self.overlay.toggle_edit_mode()
         self.hotkeys.set_edit_mode(active)
 
@@ -630,13 +635,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if missing:
             QtWidgets.QMessageBox.warning(self, "번역 API", "키(또는 모델)가 비어 있어 사용하지 않는 API: " + ", ".join(missing))
 
+    def open_overlay_style(self):
+        if self.overlay.edit_mode:
+            self._toggle_edit()  # the window is modal; leave edit mode so the overlay is click-through again
+        OverlayStyleDialog(self.settings, self.overlay, self).exec()
+
     def open_settings(self):
         old_key = self.settings.get("hotkeys.edit_mode", DEFAULT_EDIT_KEY)
         dlg = SettingsDialog(self.settings, self)
         if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         dlg.apply()
-        self.overlay.apply_settings()
         self.pipeline.apply_logging()
         new_key = self.settings.get("hotkeys.edit_mode", DEFAULT_EDIT_KEY)
         if new_key != old_key:

@@ -69,6 +69,25 @@ _OLD_DEFAULT_SLANG = {
 # F12, the v2.0-2.2.1 default, is also Steam's screenshot key. Games rarely bind Ctrl+Alt combinations.
 DEFAULT_EDIT_KEY = "ctrl+alt+o"
 
+# Everything about the overlay except its position/size (x, y, w, h); also what a style file holds.
+OVERLAY_STYLE_DEFAULTS = {
+    "font_family": "Malgun Gothic", "font_size": 18, "bold": True,
+    "line_spacing": 12, "max_lines": 5, "show_original": True, "fade_sec": 0, "bg_opacity": 0,
+    "original_color": "#ffe650", "translation_color": "#ffffff", "error_color": "#ff9650",
+    "text_opacity": 100,
+    "effect": "shadow", "effect_color": "#000000", "effect_size": 2,   # effect: shadow | outline | none
+    "box": False, "box_color": "#000000", "box_opacity": 55,           # a background box behind each line
+    "original_scale": 100,                                             # original text size, % of font_size
+    "original_marker": "●", "translation_marker": "ㄴ",
+    "align": "left",            # left | center | right
+    "anchor": "top",            # top | bottom: where the lines sit inside the overlay
+    "newest_first": False,      # newest line on top instead of at the bottom
+    "translation_first": False,
+    "snap": True,               # edit mode: dragging snaps to screen edges and centre
+    "show_speaking": True,      # the dot that lights up while someone speaks
+    "toolbar": True,            # edit mode: small toolbar inside the overlay
+}
+
 OPENAI_PRESETS = {
     "gemini": {"label": "Google Gemini", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai"},
     "groq": {"label": "Groq", "base_url": "https://api.groq.com/openai/v1"},
@@ -88,7 +107,8 @@ DEFAULTS = {
             "auto_languages": ["en", "ko", "de", "fr", "es", "ru", "pl"],
             "skip_korean": True, "device": "auto", "beam_size": 5,
             "use_context": True,
-            "cloud": {"provider": "groq", "model": "whisper-large-v3", "key": "", "rpm": 20,
+            # pace: hold requests under rpm (adds a few seconds when speech piles up); off = send at once
+            "cloud": {"provider": "groq", "model": "whisper-large-v3", "key": "", "pace": False, "rpm": 20,
                       # local model used while Groq is over a limit ("" = wait instead)
                       "fallback_model": "", "fallback_preload": False}},
     "translate": {
@@ -107,9 +127,7 @@ DEFAULTS = {
     "glossary": DEFAULT_GLOSSARY,
     "slang": DEFAULT_SLANG,
     "hallucinations": DEFAULT_HALLUCINATIONS,
-    "overlay": {"x": 100, "y": 100, "w": 800, "h": 250, "font_family": "Malgun Gothic",
-                "font_size": 18, "line_spacing": 12, "max_lines": 5, "show_original": True,
-                "fade_sec": 0, "bg_opacity": 0},
+    "overlay": {"x": 100, "y": 100, "w": 800, "h": 250, **OVERLAY_STYLE_DEFAULTS},
     "hotkeys": {"edit_mode": DEFAULT_EDIT_KEY},
     "logging": {"save_transcripts": True, "retention_days": 14},
     "ui": {"cpu_warning_dismissed": False, "onboarding_done": False},
@@ -142,7 +160,7 @@ def _upgrade_to_3(data, notes):
     if str(hotkeys.get("edit_mode", "")).strip().lower() == "f12":
         hotkeys["edit_mode"] = DEFAULT_EDIT_KEY
         notes.append("오버레이 편집 모드 단축키를 F12에서 Ctrl+Alt+O로 바꿨습니다 (F12는 스팀 스크린샷 키와 겹칩니다). "
-                     "'오버레이·단축키·기록'에서 다른 키로 바꿀 수 있습니다.")
+                     "'단축키·기록'에서 다른 키로 바꿀 수 있습니다.")
     data["version"] = 3
 
 

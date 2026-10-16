@@ -47,6 +47,17 @@ def test_pacer_spacing_after_burst():
     assert pacer.wait_time() == pytest.approx(60 / (20 - pacer.burst))
 
 
+def test_pacing_is_off_unless_turned_on():
+    e = engine_with(FakeCloud({"language": "English", "segments": [seg("Go.")]}))
+    for _ in range(30):
+        e.transcribe(np.zeros(16000, np.float32))
+    assert e.pacer is None and e.cloud_wait() == 0
+    e.pacer = stt.RequestPacer(20)
+    for _ in range(e.pacer.burst):
+        e.transcribe(np.zeros(16000, np.float32))
+    assert e.cloud_wait() > 0
+
+
 def test_limit_kind_and_wait_text():
     assert stt._limit_kind("Rate limit reached ... on requests per minute (RPM): Limit 20", 3) == "minute"
     assert stt._limit_kind("... on requests per day (RPD): Limit 2000", 50) == "day"

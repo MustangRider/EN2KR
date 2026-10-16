@@ -1,19 +1,22 @@
 """Transparent, click-through subtitle overlay drawn over the game.
 
 Lines are keyed by line_id: the original appears as soon as it is recognised
-and the translation fills in when it arrives. Long sentences wrap at the window
-edge (v1 drew single lines), indented under their text rather than the marker.
+and the translation fills in when it arrives. How lines look is up to
+SubtitleRenderer (subtitle_style.py), shared with the customise dialog's preview.
 A warning line at the top reports a Groq limit with a countdown.
+
+Edit mode makes the window clickable: drag to move (snapping to screen edges
+and centre unless Alt is held), resize from the corner, and a small toolbar
+offers font size, line count, background, quick placement and the customise window.
 """
 import ctypes
 import time
 from collections import OrderedDict
-from dataclasses import dataclass
-from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..stt import fmt_wait
+from .subtitle_style import PLACEMENTS, Entry, SubtitleRenderer, placed_rect, sample_entries, snap_rect
 
 GWL_EXSTYLE = -20
 WS_EX_TRANSPARENT = 0x20
@@ -23,6 +26,15 @@ MAX_ENTRIES = 100
 FADE_OUT_SEC = 1.0      # time to fade a line from opaque to invisible
 COLLAPSE_SEC = 0.25     # then its space closes so the lines below slide up instead of jumping
 FRAME_MS = 16           # repaint interval while something is animating (~60 fps)
+BG_STEPS = (0, 30, 55, 80)  # toolbar's background button cycles through these (%)
+
+TOOLBAR_STYLE = """
+QFrame#overlayToolbar { background: rgba(20, 22, 27, 235); border: 1px solid #f2cc60; border-radius: 6px; }
+QToolButton { background: #2a303a; color: #e6e6e6; border: 1px solid #353c48; border-radius: 4px;
+              padding: 3px 7px; font-family: 'Malgun Gothic'; font-size: 9pt; }
+QToolButton:hover { background: #343b47; }
+QToolButton::menu-indicator { image: none; }
+"""
 
 
 def _smoothstep(x):
@@ -44,16 +56,10 @@ def fade_state(age, fade_sec):
     return None
 
 
-@dataclass
-class Entry:
-    en: str
-    kr: Optional[str]
-    error: Optional[str]
-    lang: str
-    time: float
-
-
 class OverlayWindow(QtWidgets.QWidget):
+    customize_requested = QtCore.Signal()
+    edit_done = QtCore.Signal()
+
     def __init__(self, settings):
         super().__init__(None, QtCore.Qt.WindowType.Tool | QtCore.Qt.WindowType.FramelessWindowHint
                          | QtCore.Qt.WindowType.WindowStaysOnTopHint)
@@ -66,9 +72,13 @@ class OverlayWindow(QtWidgets.QWidget):
         self.speaking = False
         self.scroll = 0
         self._drag = None
+        self._preview = None  # style being edited in the customise window (shown with sample lines)
+        self.cfg = settings.section("overlay")  # resize events may arrive before apply_settings()
+        self.renderer = SubtitleRenderer()
         self.grip = QtWidgets.QSizeGrip(self)
         self.grip.setFixedSize(24, 24)
         self.grip.hide()
+        self.toolbar = self._build_toolbar()
         # Single-shot, re-armed after each paint: 16 ms while fading, otherwise just when the next fade starts.
         self._anim = QtCore.QTimer(self, singleShot=True, timeout=self.update)
         self._banner = None   # (message, until) while a Groq limit is in force
@@ -80,27 +90,48 @@ class OverlayWindow(QtWidgets.QWidget):
 
     # ---------- settings ----------
     def apply_settings(self):
-        ov = self.settings.section("overlay")
-        self.cfg = ov
-        self.font = QtGui.QFont(ov.get("font_family") or "Malgun Gothic", int(ov["font_size"]), QtGui.QFont.Weight.Bold)
-        if not ov.get("fade_sec", 0):
+        self.cfg = dict(self._preview) if self._preview is not None else self.settings.section("overlay")
+        self.renderer.set_style(self.cfg)
+        if not self.cfg.get("fade_sec", 0):
             self._anim.stop()
+        self._place_toolbar()
         self.update()
 
+    @property
+    def previewing(self):
+        return self._preview is not None
+
+    def set_style_preview(self, cfg):
+        """Show ``cfg`` (unsaved, with sample lines) while the customise window is open; None ends it."""
+        self._preview = dict(cfg) if cfg is not None else None
+        self.apply_settings()
+
     def _set(self, key, value):
+        """Change one overlay setting from edit mode (also inside a running preview)."""
         self.settings.set(f"overlay.{key}", value)
+        if self._preview is not None:
+            self._preview[key] = value
         self.cfg[key] = value
+        self.renderer.set_style(self.cfg)
+        self.update()
 
     def _save_geometry(self):
         g = self.geometry()
         for k, v in (("x", g.x()), ("y", g.y()), ("w", g.width()), ("h", g.height())):
-            self._set(k, v)
+            self.settings.set(f"overlay.{k}", v)
+            self.cfg[k] = v
         self.settings.save()
 
     def _ensure_on_screen(self):
         screens = QtGui.QGuiApplication.screens()
         if screens and not any(s.availableGeometry().intersects(self.geometry()) for s in screens):
             self.move(100, 100)
+
+    def place(self, where, screen=None):
+        """Quick placement (see PLACEMENTS) on ``screen`` (default: the one the overlay is on)."""
+        screen = screen or self.screen() or QtGui.QGuiApplication.primaryScreen()
+        self.setGeometry(placed_rect(where, self.size(), screen.geometry()))
+        self._save_geometry()
 
     # ---------- content ----------
     def upsert_source(self, line_id, text, lang):
@@ -155,6 +186,50 @@ class OverlayWindow(QtWidgets.QWidget):
         return f"⚠ {message} · {fmt_wait(left)} 후 재개"
 
     # ---------- edit mode ----------
+    def _build_toolbar(self):
+        bar = QtWidgets.QFrame(self)
+        bar.setObjectName("overlayToolbar")
+        bar.setStyleSheet(TOOLBAR_STYLE)
+        lay = QtWidgets.QHBoxLayout(bar)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(3)
+
+        def button(text, tip, slot):
+            b = QtWidgets.QToolButton()
+            b.setText(text)
+            b.setToolTip(tip)
+            b.clicked.connect(slot)
+            lay.addWidget(b)
+            return b
+
+        button("가−", "글자 작게 (-)", lambda: self.change_font(-2))
+        button("가+", "글자 크게 (=)", lambda: self.change_font(2))
+        button("줄−", "표시 줄 수 줄이기 (Ctrl+휠)", lambda: self.change_max_lines(-1))
+        button("줄+", "표시 줄 수 늘리기 (Ctrl+휠)", lambda: self.change_max_lines(1))
+        button("배경", "배경 어둡게: 투명 → 30% → 55% → 80%", self.cycle_background)
+        where = QtWidgets.QToolButton()
+        where.setText("위치 ▾")
+        where.setToolTip("화면의 정해진 자리로 옮기기")
+        where.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu = QtWidgets.QMenu(where)
+        for key, label in PLACEMENTS.items():
+            menu.addAction(label, lambda k=key: self.place(k))
+        where.setMenu(menu)
+        lay.addWidget(where)
+        button("꾸미기…", "오버레이 꾸미기 창 열기", self.customize_requested.emit)
+        button("완료", "편집 모드 끝내기", self.edit_done.emit)
+        bar.adjustSize()
+        bar.hide()
+        return bar
+
+    def _place_toolbar(self):
+        bar = self.toolbar
+        bar.adjustSize()
+        bar.move(max(4, self.width() - bar.width() - 6), 6)
+        bar.setVisible(self.edit_mode and bool(self.cfg.get("toolbar", True)))
+        if bar.isVisible():
+            bar.raise_()
+
     def showEvent(self, event):
         super().showEvent(event)
         QtCore.QTimer.singleShot(0, lambda: self._set_click_through(not self.edit_mode))
@@ -175,22 +250,24 @@ class OverlayWindow(QtWidgets.QWidget):
         else:
             self.scroll = 0
             self._save_geometry()
+        self._place_toolbar()
         self.update()
         return self.edit_mode
 
     def change_font(self, delta):
         if self.edit_mode:
-            self._set("font_size", max(8, min(72, self.cfg["font_size"] + delta)))
-            self.font.setPointSize(self.cfg["font_size"])
-            self.update()
+            self._set("font_size", max(8, min(72, int(self.cfg["font_size"]) + delta)))
 
     def change_max_lines(self, delta):
-        self._set("max_lines", max(1, min(20, self.cfg["max_lines"] + delta)))
-        self.update()
+        self._set("max_lines", max(1, min(20, int(self.cfg["max_lines"]) + delta)))
 
     def change_spacing(self, delta):
-        self._set("line_spacing", max(0, min(40, self.cfg["line_spacing"] + delta)))
-        self.update()
+        self._set("line_spacing", max(0, min(40, int(self.cfg["line_spacing"]) + delta)))
+
+    def cycle_background(self):
+        now = int(self.cfg.get("bg_opacity", 0))
+        self._set("bg_opacity", next((s for s in BG_STEPS if s > now), BG_STEPS[0]))
+        self.settings.save()
 
     # ---------- mouse ----------
     def mousePressEvent(self, event):
@@ -198,8 +275,12 @@ class OverlayWindow(QtWidgets.QWidget):
             self._drag = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
 
     def mouseMoveEvent(self, event):
-        if self._drag is not None:
-            self.move(event.globalPosition().toPoint() - self._drag)
+        if self._drag is None:
+            return
+        rect = QtCore.QRect(event.globalPosition().toPoint() - self._drag, self.size())
+        if self.cfg.get("snap", True) and not event.modifiers() & QtCore.Qt.KeyboardModifier.AltModifier:
+            rect = snap_rect(rect, [s.geometry() for s in QtGui.QGuiApplication.screens()])
+        self.move(rect.topLeft())
 
     def mouseReleaseEvent(self, event):
         if self._drag is not None:
@@ -222,10 +303,13 @@ class OverlayWindow(QtWidgets.QWidget):
 
     def resizeEvent(self, event):
         self.grip.move(self.width() - self.grip.width(), self.height() - self.grip.height())
+        self._place_toolbar()
         super().resizeEvent(event)
 
     # ---------- painting ----------
     def _visible_entries(self, now=None):
+        if self._preview is not None:
+            return [(e, 1.0, 1.0) for e in sample_entries(int(self.cfg["max_lines"]))]
         now = time.monotonic() if now is None else now
         fade = 0.0 if self.edit_mode else float(self.cfg.get("fade_sec", 0) or 0)
         items = list(self.entries.values())
@@ -241,7 +325,7 @@ class OverlayWindow(QtWidgets.QWidget):
     def _next_frame_ms(self, now=None):
         """Delay until the overlay needs repainting again, or None if nothing will change."""
         fade = float(self.cfg.get("fade_sec", 0) or 0)
-        if fade <= 0 or self.edit_mode or not self.entries:
+        if fade <= 0 or self.edit_mode or not self.entries or self._preview is not None:
             return None
         now = time.monotonic() if now is None else now
         wait = None
@@ -253,89 +337,30 @@ class OverlayWindow(QtWidgets.QWidget):
                 wait = -t if wait is None else min(wait, -t)
         return None if wait is None else max(FRAME_MS, int(wait * 1000) + 1)
 
-    def _blocks(self, e):
-        """(marker, text, color) per block; wrapped lines continue under the text, not the marker."""
-        blocks = []
-        if self.cfg.get("show_original", True):
-            blocks.append(("● ", e.en, QtGui.QColor(255, 230, 80)))
-        if e.error:
-            blocks.append(("ㄴ ", f"⚠ {e.error[:120]}", QtGui.QColor(255, 150, 80)))
-        elif e.kr is None:
-            blocks.append(("ㄴ ", "…", QtGui.QColor(170, 170, 170)))
-        else:
-            blocks.append(("ㄴ ", e.kr, QtGui.QColor(255, 255, 255)))
-        return blocks
-
-    @staticmethod
-    def _draw_text(p, rect, flags, text, color, alpha):
-        shadow = QtGui.QColor(0, 0, 0, int(200 * alpha))
-        for dx, dy in ((2, 2), (1, 1), (-1, 1)):
-            p.setPen(shadow)
-            p.drawText(rect.translated(dx, dy), flags, text)
-        c = QtGui.QColor(color)
-        c.setAlpha(int(255 * alpha))
-        p.setPen(c)
-        p.drawText(rect, flags, text)
-
     def paintEvent(self, event):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
         rect = self.rect()
-        bg = 160 if self.edit_mode else int(float(self.cfg.get("bg_opacity", 0)) * 2.55)
+        bg = int(float(self.cfg.get("bg_opacity", 0)) * 2.55)
+        if self.edit_mode:
+            bg = max(bg, 160)
         if bg:
             p.fillRect(rect, QtGui.QColor(0, 0, 0, bg))
         if self.edit_mode:
             p.setPen(QtGui.QPen(QtGui.QColor(255, 220, 0), 2))
             p.drawRect(rect.adjusted(1, 1, -1, -1))
-            info = (f"편집 모드 · 글자 {self.cfg['font_size']}pt(=/-) · 줄 {self.cfg['max_lines']}(Ctrl+휠) · "
-                    f"간격 {self.cfg['line_spacing']}px(Shift+휠)")
+            info = (f"편집 모드 · 끌어서 이동 (Alt: 자석 끔) · 모서리로 크기 · 글자 {self.cfg['font_size']}pt(=/-) · "
+                    f"줄 {self.cfg['max_lines']}(Ctrl+휠) · 간격 {self.cfg['line_spacing']}px(Shift+휠)")
             p.setFont(QtGui.QFont("Malgun Gothic", 9, QtGui.QFont.Weight.Bold))
             r = QtCore.QRect(8, rect.height() - 26, rect.width() - 40, 20)
             p.setPen(QtGui.QColor(255, 220, 0))
             p.drawText(r, QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter, info)
 
-        p.setPen(QtCore.Qt.PenStyle.NoPen)
-        p.setBrush(QtGui.QColor(255, 60, 60) if self.speaking else QtGui.QColor(110, 110, 110, 180))
-        p.drawEllipse(rect.width() - 22, 10, 10, 10)
-
-        width = max(50, rect.width() - 45)
-        flags = QtCore.Qt.TextFlag.TextWordWrap | QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop
-        y = 8
-        banner = self._banner_text()
-        if banner:
-            bfont = QtGui.QFont(self.font)
-            bfont.setPointSize(max(9, int(self.cfg["font_size"] * 0.7)))
-            p.setFont(bfont)
-            bh = QtGui.QFontMetrics(bfont).boundingRect(QtCore.QRect(0, 0, width, 100000), flags, banner).height()
-            self._draw_text(p, QtCore.QRect(15, y, width, bh), flags, banner, QtGui.QColor(255, 170, 60), 1.0)
-            y += bh + 8
-
-        p.setFont(self.font)
-        fm = QtGui.QFontMetrics(self.font)
-        laid = []
-        spacing = int(self.cfg["line_spacing"])
-        for e, alpha, grow in self._visible_entries():
-            blocks = []
-            for marker, text, color in self._blocks(e):
-                indent = fm.horizontalAdvance(marker)
-                h = fm.boundingRect(QtCore.QRect(0, 0, max(20, width - indent), 100000), flags, text).height()
-                blocks.append((marker, indent, text, color, h))
-            full = sum(b[4] + 2 for b in blocks) + spacing  # same as what the drawing loop advances
-            laid.append((blocks, alpha, full * grow))
-        avail = rect.height() - y - (32 if self.edit_mode else 8) + spacing
-        while len(laid) > 1 and sum(h for _, _, h in laid) > avail:
-            laid.pop(0)  # drop the oldest line that doesn't fit
-
-        for blocks, alpha, space in laid:
-            if alpha <= 0:  # collapsing: only its (shrinking) space remains
-                y += round(space)
-                continue
-            for marker, indent, text, color, h in blocks:
-                self._draw_text(p, QtCore.QRect(15, y, indent, h), flags, marker, color, alpha)
-                self._draw_text(p, QtCore.QRect(15 + indent, y, max(20, width - indent), h), flags, text, color, alpha)
-                y += h + 2
-            y += spacing
+        self.renderer.dpr = self.devicePixelRatioF()
+        top = self.toolbar.geometry().bottom() + 8 if self.toolbar.isVisible() else 8  # keep text clear of it
+        self.renderer.paint(p, rect, self._visible_entries(), banner=self._banner_text(), speaking=self.speaking,
+                            top=top, bottom_reserve=32 if self.edit_mode else 8)
         p.end()
         delay = self._next_frame_ms()
         if delay is None:
