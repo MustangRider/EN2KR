@@ -5,7 +5,7 @@ from .. import CONTACT
 from .hotkeys import key_label
 
 
-def _steps(edit_key):
+def _steps(edit_key, toggle_key):
     return [
         ("번역 API 등록",
          "번역 API 키를 하나 이상 등록하세요. 여러 개를 등록하면 한도가 끝나거나 오류가 날 때 다음 API로 자동 전환됩니다.",
@@ -21,6 +21,11 @@ def _steps(edit_key):
          f"<b>{key_label(edit_key)}</b>로 편집 모드에 들어가 자막을 끌어 옮기고, 오른쪽 아래 모서리로 크기를 조절하세요. "
          f"한 번 더 누르면 마우스 클릭이 게임으로 통과됩니다. 글꼴·색·정렬 같은 모양은 '오버레이 꾸미기', 단축키는 '단축키·기록'에서 바꿀 수 있습니다.",
          None),
+        ("번역 켜기/끄기",
+         (f"<b>{key_label(toggle_key)}</b>를 함께 눌렀다 바로 떼면 번역을 끄고 켭니다 (소리로 알려 줌). "
+          "끄면 음성 인식과 API 사용도 멈춥니다. 메인 창 왼쪽 아래 버튼으로도 바꿀 수 있습니다.")
+         if toggle_key else "메인 창 왼쪽 아래 버튼으로 번역을 끄고 켤 수 있습니다. 끄면 음성 인식과 API 사용도 멈춥니다.",
+         None),
         ("게임 화면 모드",
          "독점 전체 화면에서는 자막이 보이지 않습니다. 게임을 '테두리 없는 창 모드'로 실행하세요.",
          None),
@@ -31,7 +36,7 @@ class OnboardingDialog(QtWidgets.QDialog):
     open_api = QtCore.Signal()
     open_engine = QtCore.Signal()
 
-    def __init__(self, edit_key="ctrl+alt+o", parent=None):
+    def __init__(self, edit_key="ctrl+alt+o", parent=None, toggle_key="ctrl+alt"):
         super().__init__(parent)
         self.setWindowTitle("시작 안내")
         outer = QtWidgets.QVBoxLayout(self)
@@ -46,7 +51,7 @@ class OnboardingDialog(QtWidgets.QDialog):
         layout.setContentsMargins(0, 0, 6, 0)
         layout.setSpacing(10)
         layout.addWidget(QtWidgets.QLabel("<h2>실시간 게임 음성 번역 오버레이</h2>"))
-        for i, (head, body, action) in enumerate(_steps(edit_key), 1):
+        for i, (head, body, action) in enumerate(_steps(edit_key, toggle_key), 1):
             box = QtWidgets.QGroupBox(f"{i}. {head}")
             bl = QtWidgets.QHBoxLayout(box)
             lab = QtWidgets.QLabel(body)

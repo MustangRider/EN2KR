@@ -27,6 +27,7 @@ FADE_OUT_SEC = 1.0      # time to fade a line from opaque to invisible
 COLLAPSE_SEC = 0.25     # then its space closes so the lines below slide up instead of jumping
 FRAME_MS = 16           # repaint interval while something is animating (~60 fps)
 BG_STEPS = (0, 30, 55, 80)  # toolbar's background button cycles through these (%)
+TOAST_SEC = 1.4             # "번역 켜짐/꺼짐" notice after the toggle hotkey
 
 TOOLBAR_STYLE = """
 QFrame#overlayToolbar { background: rgba(20, 22, 27, 235); border: 1px solid #f2cc60; border-radius: 6px; }
@@ -83,6 +84,9 @@ class OverlayWindow(QtWidgets.QWidget):
         self._anim = QtCore.QTimer(self, singleShot=True, timeout=self.update)
         self._banner = None   # (message, until) while a Groq limit is in force
         self._banner_timer = QtCore.QTimer(self, interval=1000, timeout=self.update)  # countdown
+        self.translating = True
+        self._toast = None    # (text, color, until)
+        self._toast_timer = QtCore.QTimer(self, singleShot=True, timeout=self.update)
         ov = settings.section("overlay")
         self.setGeometry(ov["x"], ov["y"], ov["w"], ov["h"])
         self._ensure_on_screen()
@@ -163,6 +167,33 @@ class OverlayWindow(QtWidgets.QWidget):
     def clear(self):
         self.entries.clear()
         self.update()
+
+    def set_translating(self, on):
+        """Translation switched on/off: brief notice in the middle, and an "off" label while off."""
+        self.translating = bool(on)
+        text, color = ("번역 켜짐", QtGui.QColor(110, 220, 140)) if on else ("번역 꺼짐", QtGui.QColor(200, 200, 200))
+        self._toast = (text, color, time.monotonic() + TOAST_SEC)
+        self._toast_timer.start(int(TOAST_SEC * 1000) + 20)
+        self.update()
+
+    def _paint_toast(self, p, rect):
+        if not self._toast:
+            return
+        text, color, until = self._toast
+        if time.monotonic() >= until:
+            self._toast = None
+            return
+        font = QtGui.QFont(self.renderer.font)
+        font.setPointSize(max(11, int(self.cfg["font_size"] * 0.8)))
+        fm = QtGui.QFontMetrics(font)
+        w, h = fm.horizontalAdvance(text) + 36, fm.height() + 14
+        box = QtCore.QRect((rect.width() - w) // 2, max(6, (rect.height() - h) // 2), w, h)
+        p.setPen(QtCore.Qt.PenStyle.NoPen)
+        p.setBrush(QtGui.QColor(15, 17, 21, 210))
+        p.drawRoundedRect(box, h / 2, h / 2)
+        p.setFont(font)
+        p.setPen(color)
+        p.drawText(box, QtCore.Qt.AlignmentFlag.AlignCenter, text)
 
     def show_banner(self, message, seconds):
         """Warning line with a countdown; an empty message (or the countdown ending) removes it."""
@@ -360,7 +391,8 @@ class OverlayWindow(QtWidgets.QWidget):
         self.renderer.dpr = self.devicePixelRatioF()
         top = self.toolbar.geometry().bottom() + 8 if self.toolbar.isVisible() else 8  # keep text clear of it
         self.renderer.paint(p, rect, self._visible_entries(), banner=self._banner_text(), speaking=self.speaking,
-                            top=top, bottom_reserve=32 if self.edit_mode else 8)
+                            top=top, bottom_reserve=32 if self.edit_mode else 8, off=not self.translating)
+        self._paint_toast(p, rect)
         p.end()
         delay = self._next_frame_ms()
         if delay is None:

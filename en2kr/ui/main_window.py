@@ -5,11 +5,11 @@ import os
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .. import APP_NAME, __version__, gpu, paths
+from .. import APP_NAME, __version__, gpu, paths, sounds
 from ..audio import device as audio_device
 from ..audio import sessions
 from ..pipeline import Pipeline
-from ..settings import DEFAULT_EDIT_KEY
+from ..settings import DEFAULT_EDIT_KEY, DEFAULT_TOGGLE_KEY
 from .api_dialog import ApiDialog
 from .bridge import PipelineBridge, Worker
 from .engine_dialog import EngineDialog
@@ -142,7 +142,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bridge = PipelineBridge()
         self.pipeline = Pipeline(settings, self.bridge.events())
         self.overlay = OverlayWindow(settings)
-        self.hotkeys = Hotkeys(settings.get("hotkeys.edit_mode", DEFAULT_EDIT_KEY))
+        self.hotkeys = Hotkeys(settings.get("hotkeys.edit_mode", DEFAULT_EDIT_KEY),
+                               settings.get("hotkeys.translate_toggle", DEFAULT_TOGGLE_KEY))
         self.cuda = gpu.cuda_device_count() > 0
         self._lat = {"stt": None, "tr": None}
         self._save_timer = QtCore.QTimer(self, singleShot=True, interval=800, timeout=self.settings.save)
@@ -230,6 +231,12 @@ class MainWindow(QtWidgets.QMainWindow):
         ll.addWidget(sens)
 
         btns = QtWidgets.QHBoxLayout()
+        self.toggle_btn = QtWidgets.QPushButton()
+        self.toggle_btn.setCheckable(True)
+        self.toggle_btn.setChecked(True)
+        self.toggle_btn.clicked.connect(lambda checked: self.set_translating(checked))
+        self._show_toggle(True)
+        btns.addWidget(self.toggle_btn)
         for text, slot in (("인식 엔진", self.open_engine), ("번역 API", self.open_api),
                            ("오버레이 꾸미기", self.open_overlay_style), ("단축키·기록", self.open_settings),
                            ("사용 안내", self.open_onboarding), ("기록 폴더 열기", lambda: os.startfile(paths.app_dir()))):
@@ -237,10 +244,6 @@ class MainWindow(QtWidgets.QMainWindow):
             b.clicked.connect(slot)
             btns.addWidget(b)
         btns.addStretch()
-        edit_tip = QtWidgets.QLabel(f"{key_label(self.settings.get('hotkeys.edit_mode', DEFAULT_EDIT_KEY))}: 오버레이 편집 모드")
-        edit_tip.setStyleSheet("color:#f2cc60; font-weight:bold;")
-        self.edit_tip = edit_tip
-        btns.addWidget(edit_tip)
         ll.addLayout(btns)
         split.addWidget(left)
 
@@ -266,7 +269,21 @@ class MainWindow(QtWidgets.QMainWindow):
         sb.addWidget(self.lat_label)
         sb.addPermanentWidget(self.dl_bar)
         sb.addPermanentWidget(self.usage_label)
+        self.edit_tip = QtWidgets.QLabel()  # hotkey reminder; in the status bar so the button row stays short
+        self.edit_tip.setStyleSheet("color:#f2cc60; font-weight:bold; padding: 0 6px;")
+        self._show_hotkeys()
+        sb.addPermanentWidget(self.edit_tip)
         self._populate_sources()
+
+    def _show_hotkeys(self):
+        edit = key_label(self.settings.get("hotkeys.edit_mode", DEFAULT_EDIT_KEY))
+        toggle = self.settings.get("hotkeys.translate_toggle", DEFAULT_TOGGLE_KEY)
+        self.edit_tip.setText((f"{key_label(toggle)}: 번역 켜기/끄기 · " if toggle else "") + f"{edit}: 편집 모드")
+
+    def _show_toggle(self, on):
+        self.toggle_btn.setChecked(on)
+        self.toggle_btn.setText("● 번역 켜짐" if on else "○ 번역 꺼짐")
+        self.toggle_btn.setStyleSheet("" if on else "QPushButton { color: #8b949e; }")
 
     def _add_term_tab(self, editor, title, key, toggle_text, note):
         w = QtWidgets.QWidget()
@@ -351,6 +368,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.source.activated.connect(self._source_chosen)
         self.source.about_to_show.connect(self._populate_sources)
         self.hotkeys.edit_toggled.connect(self._toggle_edit)
+        self.hotkeys.translate_toggled.connect(lambda: self.set_translating(not self.pipeline.enabled))
         self.hotkeys.font_up.connect(lambda: self.overlay.change_font(2))
         self.hotkeys.font_down.connect(lambda: self.overlay.change_font(-2))
         self.overlay.edit_done.connect(self._toggle_edit)
@@ -363,8 +381,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.overlay.show()
         self.pipeline.start()
         self.hotkeys.start()
-        if self.hotkeys.error:
-            self._log_html(f"<span style='color:#f0a020'>전역 단축키를 등록하지 못했습니다: {html.escape(str(self.hotkeys.error))}</span>")
+        self._report_hotkey_errors()
         self._usage_timer.start()
         QtCore.QTimer.singleShot(2000, self._refresh_usage)
         QtCore.QTimer.singleShot(300, self._first_run_checks)
@@ -563,6 +580,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pipeline.apply_vad()
         self._save_timer.start()
 
+    def _report_hotkey_errors(self):
+        for key, err in ((self.hotkeys.edit_key, self.hotkeys.error), (self.hotkeys.toggle_key, self.hotkeys.toggle_error)):
+            if err:
+                self._log_html(f"<span style='color:#f0a020'>단축키 '{html.escape(key)}'를 등록하지 못했습니다: "
+                               f"{html.escape(str(err))}</span>")
+
+    def set_translating(self, on):
+        """Translation on/off (hotkey or button), with the on/off chime."""
+        self.pipeline.set_enabled(on)
+        self.overlay.set_translating(on)
+        self._show_toggle(on)
+        snd = self.settings.section("sound")
+        if snd.get("toggle", True):
+            sounds.play_toggle(on, int(snd.get("volume", 50)))
+        self._log_html(f"<span style='color:#58a6ff'>번역 {'켬' if on else '끔'}</span>")
+
     def _toggle_edit(self):
         if self.overlay.previewing and not self.overlay.edit_mode:
             return  # the customise window is open (modal): edit mode could not be left again
@@ -641,22 +674,23 @@ class MainWindow(QtWidgets.QMainWindow):
         OverlayStyleDialog(self.settings, self.overlay, self).exec()
 
     def open_settings(self):
-        old_key = self.settings.get("hotkeys.edit_mode", DEFAULT_EDIT_KEY)
+        old = (self.settings.get("hotkeys.edit_mode", DEFAULT_EDIT_KEY),
+               self.settings.get("hotkeys.translate_toggle", DEFAULT_TOGGLE_KEY))
         dlg = SettingsDialog(self.settings, self)
         if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         dlg.apply()
         self.pipeline.apply_logging()
-        new_key = self.settings.get("hotkeys.edit_mode", DEFAULT_EDIT_KEY)
-        if new_key != old_key:
-            self.hotkeys.set_edit_key(new_key)
-            self.edit_tip.setText(f"{key_label(new_key)}: 오버레이 편집 모드")
-            if self.hotkeys.error:
-                self._log_html(f"<span style='color:#f0a020'>단축키 '{html.escape(new_key)}'를 등록하지 못했습니다: "
-                               f"{html.escape(str(self.hotkeys.error))}</span>")
+        new = (self.settings.get("hotkeys.edit_mode", DEFAULT_EDIT_KEY),
+               self.settings.get("hotkeys.translate_toggle", DEFAULT_TOGGLE_KEY))
+        if new != old:
+            self.hotkeys.set_keys(*new)
+            self._show_hotkeys()
+            self._report_hotkey_errors()
 
     def open_onboarding(self):
-        dlg = OnboardingDialog(self.settings.get("hotkeys.edit_mode", DEFAULT_EDIT_KEY), self)
+        dlg = OnboardingDialog(self.settings.get("hotkeys.edit_mode", DEFAULT_EDIT_KEY), self,
+                               self.settings.get("hotkeys.translate_toggle", DEFAULT_TOGGLE_KEY))
         dlg.open_api.connect(self.open_api)
         dlg.open_engine.connect(self.open_engine)
         dlg.exec()

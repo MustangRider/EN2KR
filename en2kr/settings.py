@@ -68,6 +68,8 @@ _OLD_DEFAULT_SLANG = {
 
 # F12, the v2.0-2.2.1 default, is also Steam's screenshot key. Games rarely bind Ctrl+Alt combinations.
 DEFAULT_EDIT_KEY = "ctrl+alt+o"
+# Modifier-only hotkeys fire on a quick tap only (ui/hotkeys.py ChordTap), so this doesn't clash with the above.
+DEFAULT_TOGGLE_KEY = "ctrl+alt"
 
 # Everything about the overlay except its position/size (x, y, w, h); also what a style file holds.
 OVERLAY_STYLE_DEFAULTS = {
@@ -128,7 +130,8 @@ DEFAULTS = {
     "slang": DEFAULT_SLANG,
     "hallucinations": DEFAULT_HALLUCINATIONS,
     "overlay": {"x": 100, "y": 100, "w": 800, "h": 250, **OVERLAY_STYLE_DEFAULTS},
-    "hotkeys": {"edit_mode": DEFAULT_EDIT_KEY},
+    "hotkeys": {"edit_mode": DEFAULT_EDIT_KEY, "translate_toggle": DEFAULT_TOGGLE_KEY},
+    "sound": {"toggle": True, "volume": 50},   # chime when translation is switched on/off
     "logging": {"save_transcripts": True, "retention_days": 14},
     "ui": {"cpu_warning_dismissed": False, "onboarding_done": False},
 }

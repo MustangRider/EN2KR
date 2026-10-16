@@ -92,6 +92,7 @@ class Pipeline:
         self._switch_to = None     # PID found playing while the captured one was silent
         self._limit_shown = None   # Groq limit state last reported to the UI
         self._backlog = collections.deque()  # utterances waiting for a Groq request slot
+        self.enabled = True        # translation switched on (hotkey); off = audio is dropped before VAD
         self.segmenter = None
 
     # ---------- lifecycle ----------
@@ -150,6 +151,22 @@ class Pipeline:
     def restart_source(self):
         self._source_dirty.set()
 
+    def set_enabled(self, on):
+        """Switch translation on/off. Off drops audio before speech detection: no recognition,
+        no API calls, no GPU work. What was already recognised still gets translated."""
+        self.enabled = bool(on)
+        if not on:  # the STT thread empties its own backlog (see _stt_loop)
+            while True:
+                try:
+                    self._seg_q.get_nowait()
+                except queue.Empty:
+                    break
+            self.events.speech(False)
+            self.events.level(0.0)
+            self.events.status("stt", "off", "번역 꺼짐")
+        elif self.engine.ready:
+            self._report_stt_ready()
+
     def reload_stt(self, clear_fallback=False):
         if clear_fallback:
             self._force_cpu = False
@@ -175,7 +192,9 @@ class Pipeline:
         threading.Thread(target=work, name="stt-load", daemon=True).start()
 
     def _report_stt_ready(self):
-        if self.engine.device == "cpu":
+        if not self.enabled:
+            self.events.status("stt", "off", "번역 꺼짐")
+        elif self.engine.device == "cpu":
             self.events.status("stt", "wait", self.engine.describe() + " — CPU 모드(느림)")
         elif self.engine.limit_state():
             self.events.status("stt", "wait", self.engine.describe())
@@ -316,6 +335,10 @@ class Pipeline:
                     if self.segmenter.in_speech and time.monotonic() - self._last_audio > STALL_FLUSH_SEC:
                         self.segmenter.flush()
                     continue
+                if not self.enabled:
+                    if self.segmenter.in_speech:
+                        self.segmenter.reset()  # don't finish a sentence that was cut by switching off
+                    continue
                 self._level_acc.append(float(np.sqrt(np.mean(chunk * chunk))) if chunk.size else 0.0)
                 if len(self._level_acc) >= 4:
                     self.events.level(max(self._level_acc))
@@ -345,6 +368,9 @@ class Pipeline:
                 self._flush_pending()
                 if self._limit_shown and self._limit_shown[1] <= time.monotonic():
                     self._report_stt_ready()  # the Groq limit ran out while nobody spoke
+                continue
+            if not self.enabled:
+                self._backlog.clear()
                 continue
             if not self.engine.ready:
                 continue

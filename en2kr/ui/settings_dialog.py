@@ -1,7 +1,8 @@
 """Hotkey and transcript settings (the overlay's look has its own window: overlay_dialog.py)."""
 from PySide6 import QtWidgets
 
-from ..settings import DEFAULT_EDIT_KEY
+from .. import sounds
+from ..settings import DEFAULT_EDIT_KEY, DEFAULT_TOGGLE_KEY
 
 
 class SettingsDialog(QtWidgets.QDialog):
@@ -17,7 +18,29 @@ class SettingsDialog(QtWidgets.QDialog):
         self.hotkey = QtWidgets.QLineEdit(settings.get("hotkeys.edit_mode", DEFAULT_EDIT_KEY))
         self.hotkey.setPlaceholderText(f"예: {DEFAULT_EDIT_KEY}, scroll lock, pause")
         f2.addRow("오버레이 편집 모드:", self.hotkey)
-        tip = QtWidgets.QLabel("게임에서 쓰지 않는 키를 고르세요 (F12는 스팀 스크린샷 키와 겹칩니다). "
+        self.toggle_key = QtWidgets.QLineEdit(settings.get("hotkeys.translate_toggle", DEFAULT_TOGGLE_KEY))
+        self.toggle_key.setPlaceholderText(f"예: {DEFAULT_TOGGLE_KEY}, ctrl+shift, f9 (비우면 사용 안 함)")
+        f2.addRow("번역 켜기/끄기:", self.toggle_key)
+        snd = settings.section("sound")
+        self.sound_on = QtWidgets.QCheckBox("켜고 끌 때 소리")
+        self.sound_on.setChecked(snd.get("toggle", True))
+        self.volume = QtWidgets.QSpinBox()
+        self.volume.setRange(5, 100)
+        self.volume.setSuffix(" %")
+        self.volume.setValue(int(snd.get("volume", 50)))
+        sound_row = QtWidgets.QHBoxLayout()
+        sound_row.addWidget(self.sound_on)
+        sound_row.addWidget(QtWidgets.QLabel("크기"))
+        sound_row.addWidget(self.volume)
+        for text, on in (("켜짐 듣기", True), ("꺼짐 듣기", False)):
+            b = QtWidgets.QPushButton(text)
+            b.clicked.connect(lambda _=False, o=on: sounds.play_toggle(o, self.volume.value()))
+            sound_row.addWidget(b)
+        sound_row.addStretch()
+        f2.addRow(sound_row)
+        tip = QtWidgets.QLabel("Ctrl·Alt·Shift만으로 된 키(기본 Ctrl+Alt)는 함께 눌렀다가 바로 뗄 때만 동작합니다. 다른 키와 같이 "
+                               "누르거나(Ctrl+Alt+O 등), 웅크리기처럼 Ctrl을 누르고 있다가 Alt를 누르거나, 오래 누르면 무시합니다. "
+                               "게임에서 쓰지 않는 키를 고르세요 (F12는 스팀 스크린샷 키와 겹칩니다). "
                                "게임이 관리자 권한으로 실행 중이면 이 프로그램도 관리자 권한으로 실행해야 단축키가 동작합니다.")
         tip.setObjectName("muted")
         tip.setWordWrap(True)
@@ -49,11 +72,21 @@ class SettingsDialog(QtWidgets.QDialog):
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
-        self.resize(460, self.sizeHint().height())
+        self.resize(560, self.sizeHint().height())
+
+    def accept(self):
+        edit = self.hotkey.text().strip().lower() or DEFAULT_EDIT_KEY
+        if edit == self.toggle_key.text().strip().lower():
+            QtWidgets.QMessageBox.warning(self, "단축키", "편집 모드와 번역 켜기/끄기에 같은 키를 쓸 수 없습니다.")
+            return
+        super().accept()
 
     def apply(self):
         s = self.settings
         s.set("hotkeys.edit_mode", self.hotkey.text().strip().lower() or DEFAULT_EDIT_KEY)
+        s.set("hotkeys.translate_toggle", self.toggle_key.text().strip().lower())
+        s.set("sound.toggle", self.sound_on.isChecked())
+        s.set("sound.volume", self.volume.value())
         s.set("logging.save_transcripts", self.save_tx.isChecked())
         s.set("logging.retention_days", self.retention.value())
         s.save()

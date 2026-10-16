@@ -243,13 +243,24 @@ class SubtitleRenderer:
 
     # ---------- painting ----------
     def text_width(self, rect):
-        right = DOT_MARGIN if self.cfg["show_speaking"] else LEFT_MARGIN
+        right = DOT_MARGIN if self.cfg["show_speaking"] else LEFT_MARGIN  # the "off" label sits above the text
         return max(50, rect.width() - LEFT_MARGIN - right)
 
-    def paint(self, p, rect, items, banner=None, speaking=False, top=8, bottom_reserve=8):
-        """items: [(entry, alpha, height_factor)] oldest first (see overlay.fade_state)."""
+    def paint(self, p, rect, items, banner=None, speaking=False, top=8, bottom_reserve=8, off=False):
+        """items: [(entry, alpha, height_factor)] oldest first (see overlay.fade_state).
+        off: translation is switched off; a small label replaces the speaking dot."""
         c = self.cfg
-        if c["show_speaking"]:
+        if off:
+            label = QtGui.QFont(self.font)
+            label.setPointSize(9)
+            p.setFont(label)
+            r = QtCore.QRect(0, 4, rect.width() - 10, 20)
+            align = QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
+            p.setPen(QtGui.QColor(0, 0, 0, 200))
+            p.drawText(r.translated(1, 1), align, "번역 꺼짐")
+            p.setPen(QtGui.QColor(170, 170, 170))
+            p.drawText(r, align, "번역 꺼짐")
+        elif c["show_speaking"]:
             p.setPen(QtCore.Qt.PenStyle.NoPen)
             p.setBrush(QtGui.QColor(255, 60, 60) if speaking else QtGui.QColor(110, 110, 110, 180))
             p.drawEllipse(rect.width() - 22, 10, 10, 10)
